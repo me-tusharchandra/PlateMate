@@ -12,3 +12,4 @@ pyzbar==0.1.9
 # For Ubuntu/Debian: apt-get install libzbar0
 # For Windows: pip install pyzbar[scripts]
 gunicorn==21.2.0 
+dotenv
