@@ -10,7 +10,7 @@ import google.generativeai as genai
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
-from flask import Flask, request, jsonify, session, render_template, redirect, url_for, flash
+from flask import Flask, request, jsonify, session, render_template, redirect, url_for, flash, Response
 import base64
 
 # 1. Load Environment Variables ----------------------------------------
@@ -1124,6 +1124,102 @@ def scan_frame():
         print(f"Error in scan_frame: {str(e)}")
         print(traceback.format_exc())
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+
+@app.route('/direct_camera')
+def direct_camera():
+    """
+    A page that uses server-side camera access with OpenCV and streams it to the browser.
+    This is an alternative approach when browser-based camera access isn't working.
+    """
+    if 'user_id' not in session:
+        flash('Please log in to access this page.', 'warning')
+        return redirect(url_for('login'))
+    
+    return render_template('direct_camera.html')
+
+def generate_frames():
+    """
+    Generator function that captures frames from the camera and yields them as JPEG images.
+    """
+    # Initialize the camera
+    camera = cv2.VideoCapture(0)  # 0 is usually the default camera
+    
+    if not camera.isOpened():
+        print("Error: Could not open camera.")
+        return
+    
+    # Set camera properties for better quality
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+    while True:
+        success, frame = camera.read()
+        if not success:
+            print("Error: Failed to capture frame.")
+            break
+        
+        # Process the frame to detect barcodes
+        results = read_barcode(frame=frame)
+        
+        # If a barcode is detected, draw a rectangle around it and display the data
+        if results and results[0][0] != "MANUAL_ENTRY_REQUIRED":
+            barcode_data, barcode_type = results[0]
+            cv2.putText(frame, f"{barcode_data} ({barcode_type})", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            
+            # Get product information
+            product_info = get_product_from_openfoodfacts(barcode_data)
+            
+            if product_info:
+                # Display product name
+                cv2.putText(frame, f"Product: {product_info['title']}", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                # Save the product to the user's history
+                try:
+                    user = User.query.get(session['user_id'])
+                    
+                    # Check if product already exists in user's history
+                    existing_product = SavedProduct.query.filter_by(
+                        user_id=user.id, barcode=barcode_data).first()
+                    
+                    if not existing_product:
+                        new_product = SavedProduct(
+                            barcode=barcode_data,
+                            title=product_info['title'],
+                            brand=product_info['brand'],
+                            category=product_info['category'],
+                            user_id=user.id
+                        )
+                        db.session.add(new_product)
+                        db.session.commit()
+                except Exception as e:
+                    print(f"Error saving product: {str(e)}")
+        
+        # Convert the frame to JPEG format
+        ret, buffer = cv2.imencode('.jpg', frame)
+        if not ret:
+            print("Error: Failed to encode frame.")
+            break
+        
+        # Yield the frame in the response
+        frame_bytes = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+    
+    # Release the camera when done
+    camera.release()
+
+@app.route('/video_feed')
+def video_feed():
+    """
+    Route that returns the video feed from the camera.
+    """
+    if 'user_id' not in session:
+        return "Authentication required", 401
+    
+    return Response(generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 # Run the application
 if __name__ == "__main__":

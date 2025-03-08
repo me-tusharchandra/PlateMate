@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+
+{% block title %}Direct Camera - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">Scan Product with Camera (Server-side)</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> This page uses your computer's camera directly through the server. Position the barcode in the center of the camera view.
+                    </div>
+                    
+                    <div class="text-center mb-3">
+                        <img src="{{ url_for('video_feed') }}" width="100%" class="img-fluid border rounded">
+                    </div>
+                    
+                    <div class="alert alert-secondary text-center">
+                        When a barcode is detected, the product will be automatically added to your history.
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('manual_entry') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-keyboard"></i> Manual Entry
+                        </a>
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to Dashboard
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

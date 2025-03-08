@@ -12,6 +12,7 @@
             </button>
             <ul class="dropdown-menu" aria-labelledby="scanDropdown">
                 <li><a class="dropdown-item" href="{{ url_for('scan_camera') }}"><i class="fas fa-camera me-2"></i>Camera Scan</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('direct_camera') }}"><i class="fas fa-video me-2"></i>Server Camera Scan</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('camera_test') }}"><i class="fas fa-video me-2"></i>Camera Test</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('scan_barcode') }}"><i class="fas fa-upload me-2"></i>Upload Image</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('manual_entry') }}"><i class="fas fa-keyboard me-2"></i>Manual Entry</a></li>
