@@ -11,6 +11,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, session, render_template, redirect, url_for, flash
+import base64
 
 # 1. Load Environment Variables ----------------------------------------
 load_dotenv()
@@ -93,45 +94,134 @@ def allowed_file(filename):
     """Check if the uploaded file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def read_barcode(image_path):
+def read_barcode(image_path=None, frame=None):
     """
-    Reads a barcode from a local image file using OpenCV's QR code detector.
-    Returns a list of tuples (barcode_data, barcode_type) if found,
-    or None if no barcodes are detected.
+    Reads barcode or QR code from an image file or directly from a video frame.
+    Returns a list of tuples (barcode_data, barcode_type) if found, else None.
     """
-    img = cv2.imread(image_path)
-    
-    # Create QR code detector
-    qr_detector = cv2.QRCodeDetector()
-    
-    # Try to detect and decode QR code
-    data, bbox, _ = qr_detector.detectAndDecode(img)
-    
-    if data:
-        # Successfully detected QR code
-        return [(data, "QR-Code")]
-    
-    # If QR detection fails, we can try some basic image processing for linear barcodes
-    # This is a simplified approach and may not work for all barcodes
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Apply image processing to enhance barcode visibility
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    # For now, we'll just inform the user to enter the barcode manually
-    # since reliable barcode detection without pyzbar is complex
-    print("Note: Using simplified barcode detection. For better results, fix the ZBar library installation.")
-    
-    # Check if there are any potential barcode-like patterns
-    # This is very basic and won't work for all cases
-    edges = cv2.Canny(thresh, 100, 200)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if len(contours) > 5:  # Arbitrary threshold for potential barcode presence
-        return [("MANUAL_ENTRY_REQUIRED", "UNKNOWN")]
-    
-    return None
+    try:
+        # If we're processing a file
+        if image_path and not frame:
+            # Read the image
+            image = cv2.imread(image_path)
+            if image is None:
+                print(f"Failed to read image from {image_path}")
+                return None
+        # If we're processing a video frame
+        elif frame is not None:
+            image = frame
+            if image is None or image.size == 0:
+                print("Received empty frame")
+                return None
+        else:
+            print("No image path or frame provided")
+            return None
+            
+        # Convert to grayscale
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Try to use pyzbar if available (most reliable)
+        try:
+            from pyzbar.pyzbar import decode
+            barcodes = decode(image)
+            if barcodes:
+                return [(barcode.data.decode('utf-8'), barcode.type) for barcode in barcodes]
+        except ImportError:
+            print("pyzbar not available, falling back to OpenCV")
+        except Exception as e:
+            print(f"Error using pyzbar: {str(e)}")
+        
+        # Initialize the cv2 QRCode detector
+        qr_detector = cv2.QRCodeDetector()
+        
+        # Detect and decode QR code
+        data, bbox, _ = qr_detector.detectAndDecode(gray)
+        
+        # If QR code is detected
+        if data:
+            print(f"QR code detected: {data}")
+            return [(data, "QR-Code")]
+            
+        # Enhanced OpenCV-based barcode detection methods
+        
+        # Method 1: Apply adaptive thresholding
+        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                      cv2.THRESH_BINARY, 11, 2)
+        
+        # Method 2: Try Canny edge detection with better parameters
+        edges = cv2.Canny(gray, 50, 200, apertureSize=3)
+        
+        # Method 3: Try different blurring techniques
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Method 4: Morphological operations to enhance barcode features
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel)
+        
+        # Method 5: Sobel edge detection (good for barcodes)
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        sobel = cv2.magnitude(sobelx, sobely)
+        sobel = cv2.normalize(sobel, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+        _, sobel_binary = cv2.threshold(sobel, 50, 255, cv2.THRESH_BINARY)
+        
+        # Combine methods for contour detection
+        for img in [thresh, edges, binary, morph, sobel_binary]:
+            contours, _ = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Filter contours based on area and aspect ratio to find potential barcode regions
+            potential_barcodes = []
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+                area = cv2.contourArea(contour)
+                aspect_ratio = float(w) / h if h > 0 else 0
+                
+                # Barcodes typically have a specific aspect ratio and minimum area
+                if area > 1000 and (aspect_ratio > 2.0 or aspect_ratio < 0.5):
+                    potential_barcodes.append((x, y, w, h))
+            
+            # If we found potential barcodes, try to decode them
+            if potential_barcodes:
+                print(f"Found {len(potential_barcodes)} potential barcode regions")
+                
+                # For each potential barcode region, try to extract and decode
+                for x, y, w, h in potential_barcodes:
+                    # Add padding around the region
+                    padding = 10
+                    x_start = max(0, x - padding)
+                    y_start = max(0, y - padding)
+                    x_end = min(gray.shape[1], x + w + padding)
+                    y_end = min(gray.shape[0], y + h + padding)
+                    
+                    # Extract the region
+                    roi = gray[y_start:y_end, x_start:x_end]
+                    
+                    # Try to enhance the region for better detection
+                    _, roi_binary = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    
+                    # Try to detect lines in the region (barcodes have parallel lines)
+                    lines = cv2.HoughLinesP(roi_binary, 1, np.pi/180, 50, minLineLength=w/3, maxLineGap=10)
+                    
+                    # If we found enough parallel lines, it's likely a barcode
+                    if lines is not None and len(lines) > 5:
+                        # For now, we'll return a manual entry required
+                        # In a production app, you might want to implement a more sophisticated
+                        # barcode decoding algorithm here
+                        return [("MANUAL_ENTRY_REQUIRED", "UNKNOWN")]
+        
+        # If we have too many potential barcodes, it's likely not a barcode image
+        if len(contours) > 5:  # Arbitrary threshold for potential barcode presence
+            return [("MANUAL_ENTRY_REQUIRED", "UNKNOWN")]
+        
+        return None
+        
+    except Exception as e:
+        import traceback
+        print(f"Error reading barcode: {str(e)}")
+        print(traceback.format_exc())
+        return None
 
 def get_product_from_openfoodfacts(barcode):
     """
@@ -153,15 +243,49 @@ def get_product_from_openfoodfacts(barcode):
             image_url = product.get("image_url", "")
             nutriments = product.get("nutriments", {})
             
+            # Extract allergen information
+            allergens = product.get("allergens_tags", [])
+            allergens_from_ingredients = product.get("allergens_from_ingredients", "")
+            
+            # Extract ingredient analysis information
+            ingredients_analysis = product.get("ingredients_analysis_tags", [])
+            
+            # Extract detailed ingredients list
+            ingredients_list = []
+            if "ingredients" in product and isinstance(product["ingredients"], list):
+                for ingredient in product["ingredients"]:
+                    ingredients_list.append({
+                        "id": ingredient.get("id", ""),
+                        "text": ingredient.get("text", ""),
+                        "percent": ingredient.get("percent_estimate", 0),
+                        "vegan": ingredient.get("vegan", "unknown"),
+                        "vegetarian": ingredient.get("vegetarian", "unknown"),
+                        "from_palm_oil": ingredient.get("from_palm_oil", "unknown")
+                    })
+            
+            # Extract nutrition grade and eco-score
+            nutrition_grade = product.get("nutriscore_grade", "")
+            eco_score = product.get("ecoscore_grade", "")
+            
+            # Extract traces information (may contain traces of)
+            traces = product.get("traces_tags", [])
+            
             return {
                 "barcode": barcode,
                 "title": title,
                 "brand": brand,
                 "description": description,
                 "ingredients": ingredients,
+                "ingredients_list": ingredients_list,
                 "category": category,
                 "image_url": image_url,
-                "nutriments": nutriments
+                "nutriments": nutriments,
+                "allergens": allergens,
+                "allergens_from_ingredients": allergens_from_ingredients,
+                "ingredients_analysis": ingredients_analysis,
+                "nutrition_grade": nutrition_grade,
+                "eco_score": eco_score,
+                "traces": traces
             }
     return None
 
@@ -183,6 +307,14 @@ def analyze_product_with_gemini(product_info, user_profile):
     - Category: {product_info['category']}
     - Ingredients: {product_info['ingredients']}
     - Nutrition Facts: {json.dumps(product_info.get('nutriments', {}))}
+    - Nutrition Grade: {product_info.get('nutrition_grade', 'Not available')}
+    - Eco Score: {product_info.get('eco_score', 'Not available')}
+    
+    ALLERGEN INFORMATION:
+    - Declared Allergens: {', '.join(product_info.get('allergens', []))}
+    - Allergens from Ingredients: {product_info.get('allergens_from_ingredients', 'None')}
+    - May Contain Traces of: {', '.join(product_info.get('traces', []))}
+    - Ingredient Analysis: {', '.join(product_info.get('ingredients_analysis', []))}
     
     USER PROFILE:
     - Age: {user_profile['age']}
@@ -251,6 +383,7 @@ def find_alternative_products(product_info, user_profile, analysis):
     based on the user's dietary restrictions and the current product category.
     """
     alternatives = []
+    seen_products = set()  # Track unique products by title+brand combination
     
     # First check our database for known alternatives
     if 'conflicting_ingredients' in analysis and analysis['conflicting_ingredients']:
@@ -260,13 +393,39 @@ def find_alternative_products(product_info, user_profile, analysis):
             ).limit(3).all()
             
             for alt in db_alternatives:
-                alternatives.append({
-                    "barcode": alt.barcode,
-                    "title": alt.title,
-                    "brand": alt.brand,
-                    "category": alt.category,
-                    "reason": f"Safe alternative for {ingredient} allergy"
-                })
+                # Create a unique identifier for this product
+                product_key = f"{alt.title.lower()}|{alt.brand.lower()}"
+                if product_key not in seen_products:
+                    seen_products.add(product_key)
+                    alternatives.append({
+                        "barcode": alt.barcode,
+                        "title": alt.title,
+                        "brand": alt.brand,
+                        "category": alt.category,
+                        "reason": f"Safe alternative for {ingredient} allergy"
+                    })
+    
+    # Also check for alternatives based on detected allergens
+    user_allergies = [allergy.strip().lower() for allergy in user_profile['allergies'] if allergy.strip()]
+    product_allergens = [allergen.replace('en:', '') for allergen in product_info.get('allergens', [])]
+    
+    for allergen in product_allergens:
+        if any(user_allergy in allergen.lower() for user_allergy in user_allergies):
+            db_alternatives = AlternativeProduct.query.filter_by(
+                for_allergy=allergen.lower()
+            ).limit(2).all()
+            
+            for alt in db_alternatives:
+                product_key = f"{alt.title.lower()}|{alt.brand.lower()}"
+                if product_key not in seen_products:
+                    seen_products.add(product_key)
+                    alternatives.append({
+                        "barcode": alt.barcode,
+                        "title": alt.title,
+                        "brand": alt.brand,
+                        "category": alt.category,
+                        "reason": f"Safe alternative for {allergen} allergy"
+                    })
     
     # If we don't have enough alternatives, search OpenFoodFacts
     if len(alternatives) < 3 and product_info.get('category'):
@@ -283,24 +442,37 @@ def find_alternative_products(product_info, user_profile, analysis):
                 if 'products' in data and data['products']:
                     # Filter products that don't contain the conflicting ingredients
                     conflicting_ingredients = analysis.get('conflicting_ingredients', [])
+                    user_allergens = [allergen.lower() for allergen in user_allergies]
                     
-                    for product in data['products'][:10]:  # Check first 10 products
+                    for product in data['products'][:15]:  # Check more products
                         ingredients_text = product.get('ingredients_text', '').lower()
+                        product_allergens = [allergen.replace('en:', '').lower() for allergen in product.get('allergens_tags', [])]
+                        
                         is_safe = True
                         
+                        # Check for conflicting ingredients
                         for ingredient in conflicting_ingredients:
                             if ingredient.lower() in ingredients_text:
                                 is_safe = False
                                 break
                         
+                        # Check for user allergens
+                        for allergen in product_allergens:
+                            if any(user_allergen in allergen for user_allergen in user_allergens):
+                                is_safe = False
+                                break
+                        
                         if is_safe and product.get('product_name'):
-                            alternatives.append({
-                                "barcode": product.get('code', ''),
-                                "title": product.get('product_name', ''),
-                                "brand": product.get('brands', ''),
-                                "category": product.get('categories', ''),
-                                "reason": "Safe alternative from the same category"
-                            })
+                            product_key = f"{product.get('product_name', '').lower()}|{product.get('brands', '').lower()}"
+                            if product_key not in seen_products:
+                                seen_products.add(product_key)
+                                alternatives.append({
+                                    "barcode": product.get('code', ''),
+                                    "title": product.get('product_name', ''),
+                                    "brand": product.get('brands', ''),
+                                    "category": product.get('categories', ''),
+                                    "reason": "Safe alternative from the same category"
+                                })
                             
                             if len(alternatives) >= 5:
                                 break
@@ -314,9 +486,62 @@ def find_alternative_products(product_info, user_profile, analysis):
 # Home route
 @app.route('/')
 def home():
-    if 'mobile' in session:
+    if 'user_id' in session:
         return redirect(url_for('dashboard'))
     return render_template('index.html')
+
+@app.route('/scan_camera')
+def scan_camera():
+    """
+    Render the camera-based barcode scanning page.
+    """
+    if 'user_id' not in session:
+        flash('Please log in to access this page.', 'warning')
+        return redirect(url_for('login'))
+    
+    # Check if pyzbar is available
+    try:
+        import importlib.util
+        pyzbar_spec = importlib.util.find_spec('pyzbar')
+        has_pyzbar = pyzbar_spec is not None
+        if has_pyzbar:
+            print("pyzbar is available and will be used for barcode detection")
+        else:
+            print("pyzbar is not available, will use OpenCV fallback")
+    except ImportError:
+        has_pyzbar = False
+        print("Error importing pyzbar module")
+    
+    # Check if OpenCV is properly configured for barcode detection
+    has_good_cv_detection = True
+    try:
+        # Verify QRCodeDetector is available
+        detector = cv2.QRCodeDetector()
+        print("OpenCV QRCodeDetector is available")
+    except Exception as e:
+        print(f"OpenCV QRCodeDetector error: {str(e)}")
+        has_good_cv_detection = False
+    
+    # Log information for debugging
+    print(f"Camera scan page accessed. Pyzbar available: {has_pyzbar}, OpenCV detection: {has_good_cv_detection}")
+    print(f"User agent: {request.user_agent}")
+    
+    return render_template('scan_camera.html', 
+                          has_pyzbar=has_pyzbar, 
+                          has_good_cv_detection=has_good_cv_detection)
+
+@app.route('/camera_test')
+def camera_test():
+    """
+    Simple camera test page to verify camera access works properly.
+    """
+    if 'user_id' not in session:
+        flash('Please log in to access this page.', 'warning')
+        return redirect(url_for('login'))
+    
+    print(f"Camera test page accessed. User agent: {request.user_agent}")
+    
+    return render_template('camera_test.html')
 
 # User Registration
 @app.route('/register', methods=['GET', 'POST'])
@@ -740,11 +965,41 @@ def api_analyze():
     # Find alternative products
     alternatives = find_alternative_products(product_info, user_profile, analysis)
     
-    return jsonify({
-        "product": product_info,
+    # Save the product to user's history
+    try:
+        saved_product = SavedProduct(
+            barcode=barcode,
+            title=product_info['title'],
+            brand=product_info['brand'],
+            category=product_info['category'],
+            is_safe=analysis.get('is_safe', False),
+            user_id=user.id
+        )
+        db.session.add(saved_product)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error saving product: {str(e)}")
+    
+    # Prepare a more detailed response
+    response_data = {
+        "product": {
+            "barcode": barcode,
+            "title": product_info['title'],
+            "brand": product_info['brand'],
+            "category": product_info['category'],
+            "image_url": product_info.get('image_url', ''),
+            "nutrition_grade": product_info.get('nutrition_grade', ''),
+            "eco_score": product_info.get('eco_score', ''),
+            "allergens": product_info.get('allergens', []),
+            "traces": product_info.get('traces', []),
+            "ingredients_analysis": product_info.get('ingredients_analysis', [])
+        },
         "analysis": analysis,
         "alternatives": alternatives
-    })
+    }
+    
+    return jsonify(response_data)
 
 # Error handlers
 @app.errorhandler(404)
@@ -759,6 +1014,116 @@ def server_error(e):
 @app.context_processor
 def inject_now():
     return {'now': datetime.now()}
+
+@app.route('/api/scan_frame', methods=['POST'])
+def scan_frame():
+    """
+    API endpoint to process a video frame for barcode/QR code detection.
+    Expects a base64-encoded image in the request.
+    """
+    if 'user_id' not in session:
+        print("API call rejected: User not authenticated")
+        return jsonify({"error": "Authentication required"}), 401
+    
+    if not request.is_json:
+        print("API call rejected: Request is not JSON")
+        return jsonify({"error": "Request must be JSON"}), 400
+    
+    data = request.json
+    image_data = data.get('image')
+    
+    if not image_data:
+        print("API call rejected: No image data provided")
+        return jsonify({"error": "No image data provided"}), 400
+    
+    try:
+        # Decode base64 image
+        print("Received image data for processing")
+        
+        # Check if the image data starts with a data URL prefix
+        if image_data.startswith('data:image'):
+            print("Image data contains data URL prefix")
+            image_data = image_data.split(',')[1]
+        
+        # Decode the base64 data
+        try:
+            image_bytes = base64.b64decode(image_data)
+            print(f"Successfully decoded base64 data, size: {len(image_bytes)} bytes")
+        except Exception as e:
+            print(f"Error decoding base64 data: {str(e)}")
+            return jsonify({"error": "Invalid base64 image data"}), 400
+        
+        # Convert to OpenCV format
+        try:
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                print("Failed to decode image from base64 data")
+                return jsonify({"error": "Failed to decode image"}), 400
+                
+            print(f"Successfully decoded image, dimensions: {frame.shape}")
+        except Exception as e:
+            print(f"Error converting image to OpenCV format: {str(e)}")
+            return jsonify({"error": "Failed to process image"}), 400
+            
+        # Process the frame to detect barcodes/QR codes
+        results = read_barcode(frame=frame)
+        
+        if not results:
+            print("No barcode detected in frame")
+            return jsonify({"status": "no_barcode_detected"})
+        
+        barcode_data, barcode_type = results[0]
+        print(f"Detected barcode: {barcode_data} ({barcode_type})")
+        
+        if barcode_data == "MANUAL_ENTRY_REQUIRED":
+            print("Barcode detected but couldn't be read clearly")
+            return jsonify({
+                "status": "manual_entry_required",
+                "message": "Barcode detected but couldn't be read clearly. Try adjusting lighting or position."
+            })
+        
+        # Get product information
+        product_info = get_product_from_openfoodfacts(barcode_data)
+        
+        if not product_info:
+            return jsonify({
+                "status": "product_not_found",
+                "barcode": barcode_data,
+                "barcode_type": barcode_type,
+                "message": "Barcode detected but product not found in database."
+            })
+            
+        # Get user profile for analysis
+        user = User.query.get(session['user_id'])
+        user_profile = {
+            "allergies": user.allergies.split(',') if user.allergies else [],
+            "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
+        }
+        
+        # Analyze product for user
+        analysis = analyze_product_with_gemini(product_info, user_profile)
+        
+        # Return the result
+        return jsonify({
+            "status": "success",
+            "barcode": barcode_data,
+            "barcode_type": barcode_type,
+            "product": {
+                "title": product_info['title'],
+                "brand": product_info['brand'],
+                "category": product_info['category'],
+                "image_url": product_info.get('image_url', '')
+            },
+            "analysis": analysis,
+            "redirect_url": url_for('product_details', barcode=barcode_data)
+        })
+    except Exception as e:
+        import traceback
+        print(f"Error in scan_frame: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 # Run the application
 if __name__ == "__main__":

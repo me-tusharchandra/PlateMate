@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+
+{% block title %}Camera Test - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">Minimal Camera Test</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> This is a minimal test to verify camera access works properly.
+                    </div>
+                    
+                    <div class="text-center mb-3">
+                        <video id="videoElement" width="100%" height="400" autoplay></video>
+                    </div>
+                    
+                    <div id="statusMessage" class="alert alert-secondary text-center">
+                        Click the button below to start the camera
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button id="startButton" class="btn btn-success btn-lg py-3">
+                            <i class="fas fa-camera"></i> Start Camera
+                        </button>
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to Dashboard
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Get elements
+    const videoElement = document.getElementById('videoElement');
+    const startButton = document.getElementById('startButton');
+    const statusMessage = document.getElementById('statusMessage');
+    
+    // Function to update status
+    function updateStatus(message, type) {
+        statusMessage.textContent = message;
+        statusMessage.className = `alert alert-${type} text-center`;
+    }
+    
+    // Start camera when button is clicked
+    startButton.addEventListener('click', function() {
+        updateStatus('Requesting camera access...', 'info');
+        
+        // Check if browser supports getUserMedia
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            // Request camera access
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(function(stream) {
+                    // Set the video source to the camera stream
+                    videoElement.srcObject = stream;
+                    updateStatus('Camera is now active', 'success');
+                    console.log('Camera started successfully');
+                })
+                .catch(function(error) {
+                    updateStatus('Error accessing camera: ' + error.message, 'danger');
+                    console.error('Camera error:', error);
+                });
+        } else {
+            updateStatus('Your browser does not support camera access', 'danger');
+        }
+    });
+    
+    // Auto-start camera when page loads
+    window.addEventListener('load', function() {
+        setTimeout(function() {
+            startButton.click();
+        }, 1000);
+    });
+</script>
+{% endblock %} 

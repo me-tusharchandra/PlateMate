@@ -1,0 +1,270 @@
+{% extends 'base.html' %}
+
+{% block title %}Scan with Camera - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">Scan Product with Camera</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> Position the barcode or QR code in the center of the camera view.
+                    </div>
+                    
+                    {% if not has_pyzbar and not has_good_cv_detection %}
+                    <div class="alert alert-warning mb-3">
+                        <i class="fas fa-exclamation-triangle"></i> Barcode detection libraries are not fully installed. Detection may be less reliable. Try to hold the barcode steady and ensure good lighting.
+                    </div>
+                    {% elif not has_pyzbar %}
+                    <div class="alert alert-info mb-3">
+                        <i class="fas fa-info-circle"></i> Using OpenCV for barcode detection. QR codes work best, but standard barcodes should also work with good lighting.
+                    </div>
+                    {% endif %}
+                    
+                    <div class="text-center mb-3">
+                        <video id="videoElement" width="100%" height="400" playsinline autoplay></video>
+                        <canvas id="canvasElement" style="display: none;"></canvas>
+                    </div>
+                    
+                    <div id="statusMessage" class="alert alert-secondary text-center">
+                        Click the button below to start the camera
+                    </div>
+                    
+                    <div id="scan-result" class="d-none">
+                        <div class="alert alert-success">
+                            <h5 id="product-name">Product Name</h5>
+                            <p id="product-info">Product details will appear here</p>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button id="startButton" class="btn btn-success btn-lg py-3">
+                            <i class="fas fa-camera"></i> Start Camera
+                        </button>
+                        <a href="{{ url_for('manual_entry') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-keyboard"></i> Manual Entry
+                        </a>
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to Dashboard
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Get elements
+    const videoElement = document.getElementById('videoElement');
+    const canvasElement = document.getElementById('canvasElement');
+    const startButton = document.getElementById('startButton');
+    const statusMessage = document.getElementById('statusMessage');
+    const scanResult = document.getElementById('scan-result');
+    const productName = document.getElementById('product-name');
+    const productInfo = document.getElementById('product-info');
+    
+    // Variables
+    let stream = null;
+    let isScanning = false;
+    let scanInterval = null;
+    let scanAttempts = 0;
+    const MAX_SCAN_ATTEMPTS = 30;
+    
+    // Function to update status
+    function updateStatus(message, type) {
+        console.log(`Status Update: ${message} (${type})`);
+        statusMessage.textContent = message;
+        statusMessage.className = `alert alert-${type} text-center`;
+    }
+    
+    // Function to handle camera errors
+    function handleCameraError(error, isRetry = false) {
+        console.error('Camera Error:', error);
+        
+        let errorMessage = 'Error accessing camera: ';
+        switch (error.name) {
+            case 'NotAllowedError':
+                errorMessage += 'Permission denied. Please allow camera access.';
+                break;
+            case 'NotFoundError':
+                errorMessage += 'No camera found.';
+                break;
+            case 'NotReadableError':
+                errorMessage += 'Camera is in use by another application.';
+                break;
+            case 'OverconstrainedError':
+                if (!isRetry) {
+                    console.log('Retrying with default camera...');
+                    initializeCamera(true);
+                    return;
+                }
+                errorMessage += 'No suitable camera found.';
+                break;
+            default:
+                errorMessage += error.message || 'Unknown error occurred.';
+        }
+        
+        updateStatus(errorMessage, 'danger');
+    }
+    
+    // Function to initialize camera
+    async function initializeCamera(useDefaultCamera = false) {
+        try {
+            updateStatus('Requesting camera access...', 'info');
+            
+            const constraints = {
+                video: useDefaultCamera ? true : { 
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+            
+            console.log('Requesting camera with constraints:', constraints);
+            
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            console.log('Camera stream obtained:', stream.getVideoTracks()[0].getSettings());
+            
+            videoElement.srcObject = stream;
+            await videoElement.play();
+            
+            updateStatus('Camera started. Scanning for barcodes...', 'info');
+            console.log('Video element is playing');
+            
+            isScanning = true;
+            scanAttempts = 0;
+            scanInterval = setInterval(scanFrame, 1000);
+            
+        } catch (error) {
+            handleCameraError(error, useDefaultCamera);
+        }
+    }
+    
+    // Start camera when button is clicked
+    startButton.addEventListener('click', function() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            updateStatus('Your browser does not support camera access', 'danger');
+            console.error('getUserMedia is not supported');
+            return;
+        }
+        
+        initializeCamera();
+    });
+    
+    // Function to scan a frame for barcodes
+    function scanFrame() {
+        if (!isScanning || !stream) return;
+        
+        scanAttempts++;
+        if (scanAttempts > MAX_SCAN_ATTEMPTS) {
+            updateStatus('No barcode detected after multiple attempts. Try manual entry or adjust lighting.', 'warning');
+            stopScanning();
+            return;
+        }
+        
+        try {
+            // Draw the current video frame to the canvas
+            const context = canvasElement.getContext('2d');
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+            context.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+            
+            // Convert the canvas to a data URL
+            const imageData = canvasElement.toDataURL('image/jpeg', 0.7);
+            
+            // Send the image to the server for processing
+            fetch('/api/scan_frame', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ image: imageData })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Scan response:', data);
+                
+                if (data.status === 'success') {
+                    // Barcode detected and product found
+                    stopScanning();
+                    updateStatus('Product found!', 'success');
+                    
+                    // Display product info
+                    productName.textContent = data.product.title;
+                    productInfo.innerHTML = `
+                        Brand: ${data.product.brand}<br>
+                        Category: ${data.product.category}<br>
+                        Barcode: ${data.barcode} (${data.barcode_type})
+                    `;
+                    
+                    scanResult.classList.remove('d-none');
+                    
+                    // Redirect to product details page after a short delay
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url;
+                    }, 2000);
+                }
+                else if (data.status === 'product_not_found') {
+                    updateStatus(data.message || `Barcode detected (${data.barcode}), but no product found.`, 'warning');
+                }
+                else if (data.status === 'manual_entry_required') {
+                    updateStatus(data.message || 'Cannot detect a clear barcode. Try manual entry.', 'warning');
+                }
+                else if (data.status === 'no_barcode_detected') {
+                    // Just continue scanning
+                    if (scanAttempts % 5 === 0) { // Every 5 attempts
+                        updateStatus('Scanning... Try to hold the barcode steady with good lighting.', 'info');
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error scanning frame:', error);
+                updateStatus('Error processing image. Please try again.', 'danger');
+            });
+        } catch (error) {
+            console.error('Error capturing frame:', error);
+            updateStatus('Error capturing camera frame. Please try again.', 'danger');
+        }
+    }
+    
+    // Function to stop scanning
+    function stopScanning() {
+        console.log('Stopping camera scan');
+        if (stream) {
+            stream.getTracks().forEach(track => {
+                track.stop();
+                console.log('Stopped track:', track.label);
+            });
+            videoElement.srcObject = null;
+            stream = null;
+        }
+        
+        clearInterval(scanInterval);
+        isScanning = false;
+    }
+    
+    // Clean up when leaving the page
+    window.addEventListener('beforeunload', stopScanning);
+    
+    // Auto-start camera when page loads
+    window.addEventListener('load', function() {
+        console.log('Page loaded, waiting to start camera...');
+        setTimeout(function() {
+            console.log('Auto-starting camera...');
+            startButton.click();
+        }, 1000);
+    });
+</script>
+{% endblock %} 

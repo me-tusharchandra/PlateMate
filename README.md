@@ -18,6 +18,7 @@ PlateMate is a dietary allergy monitoring application that helps users identify 
 - Python 3.8 or higher
 - pip (Python package installer)
 - A Gemini API key from Google AI Studio
+- libzbar (for optimal barcode scanning)
 
 ### Installation
 
@@ -38,13 +39,18 @@ PlateMate is a dietary allergy monitoring application that helps users identify 
    pip install -r requirements.txt
    ```
 
-4. Create a `.env` file in the project root with the following variables:
+4. Install libzbar for optimal barcode scanning:
+   - **macOS**: `brew install zbar`
+   - **Ubuntu/Debian**: `sudo apt-get install libzbar0`
+   - **Windows**: `pip install pyzbar[scripts]`
+
+5. Create a `.env` file in the project root with the following variables:
    ```
    GEMINI_API_KEY=your_gemini_api_key
    SECRET_KEY=your_secret_key_for_flask
    ```
 
-5. Create the necessary directories:
+6. Create the necessary directories:
    ```
    mkdir -p uploads templates static
    ```
@@ -69,6 +75,20 @@ PlateMate is a dietary allergy monitoring application that helps users identify 
 4. **View Analysis**: See if the product is safe for you based on your health profile
 5. **Explore Alternatives**: If a product is unsafe, check the suggested alternatives
 6. **Update Profile**: Modify your health information as needed
+
+## Barcode Scanning
+
+PlateMate supports two methods for barcode detection:
+
+1. **pyzbar (Recommended)**: For optimal barcode scanning performance, install the pyzbar library and its dependencies (libzbar). This provides the most reliable detection for both standard barcodes (UPC, EAN, etc.) and QR codes.
+
+2. **OpenCV Fallback**: If pyzbar is not available, the application will use OpenCV-based detection methods. These work best with QR codes but can also detect standard barcodes under good lighting conditions.
+
+Tips for successful barcode scanning:
+- Ensure good lighting conditions
+- Hold the camera steady
+- Position the barcode in the center of the frame
+- For best results, use a device with autofocus capabilities
 
 ## API Endpoints
 
