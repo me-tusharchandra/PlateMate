@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+
+{% block title %}Product History - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-sm-flex align-items-center justify-content-between mb-4">
+        <h1 class="h3 mb-0 text-gray-800">Product History</h1>
+        <a href="{{ url_for('scan_barcode') }}" class="d-none d-sm-inline-block btn btn-primary shadow-sm">
+            <i class="fas fa-barcode fa-sm text-white-50 me-2"></i>Scan New Product
+        </a>
+    </div>
+
+    <div class="card shadow mb-4">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">Your Scanned Products</h6>
+        </div>
+        <div class="card-body">
+            {% if products %}
+                <div class="table-responsive">
+                    <table class="table table-hover" id="productsTable">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Product</th>
+                                <th>Brand</th>
+                                <th>Category</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for product in products %}
+                                <tr>
+                                    <td>{{ product.date_added.strftime('%Y-%m-%d %H:%M') }}</td>
+                                    <td>{{ product.title }}</td>
+                                    <td>{{ product.brand }}</td>
+                                    <td>{{ product.category }}</td>
+                                    <td>
+                                        {% if product.is_safe %}
+                                            <span class="badge bg-success">Safe</span>
+                                        {% else %}
+                                            <span class="badge bg-danger">Unsafe</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{{ url_for('product_details', barcode=product.barcode) }}" class="btn btn-sm btn-info">
+                                            <i class="fas fa-info-circle"></i> Details
+                                        </a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-box-open fa-4x text-gray-300 mb-3"></i>
+                    <p class="lead text-muted">You haven't scanned any products yet.</p>
+                    <a href="{{ url_for('scan_barcode') }}" class="btn btn-primary mt-3">
+                        <i class="fas fa-barcode me-2"></i>Scan Your First Product
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Simple client-side filtering
+        const searchInput = document.getElementById('searchProducts');
+        const table = document.getElementById('productsTable');
+        
+        if (searchInput && table) {
+            searchInput.addEventListener('keyup', function() {
+                const searchTerm = this.value.toLowerCase();
+                const rows = table.querySelectorAll('tbody tr');
+                
+                rows.forEach(row => {
+                    const text = row.textContent.toLowerCase();
+                    row.style.display = text.includes(searchTerm) ? '' : 'none';
+                });
+            });
+        }
+    });
+</script>
+{% endblock %} 

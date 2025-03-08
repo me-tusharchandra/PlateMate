@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+
+{% block title %}Manual Barcode Entry - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-lg-6">
+            <div class="card shadow-lg border-0 rounded-lg mt-5">
+                <div class="card-header">
+                    <h3 class="text-center font-weight-light my-4">Manual Barcode Entry</h3>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('manual_entry') }}">
+                        <div class="text-center mb-4">
+                            <p class="lead">Enter a product barcode to check if it's safe for you.</p>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="barcode" class="form-label">Barcode Number</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-barcode"></i></span>
+                                <input type="text" class="form-control" id="barcode" name="barcode" 
+                                       placeholder="Enter product barcode (e.g., 3017620422003)" required>
+                            </div>
+                            <div class="form-text">
+                                Enter the numeric barcode found on the product packaging.
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid gap-2 mt-4">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-search me-2"></i>Analyze Product
+                            </button>
+                        </div>
+                    </form>
+                    
+                    <div class="text-center mt-4">
+                        <p>Want to scan a barcode instead?</p>
+                        <a href="{{ url_for('scan_barcode') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-camera me-2"></i>Scan Barcode
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card shadow-lg border-0 rounded-lg mt-4">
+                <div class="card-header">
+                    <h5 class="text-center font-weight-light my-2">Example Barcodes to Try</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Barcode</th>
+                                    <th>Product</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>3017620422003</td>
+                                    <td>Nutella</td>
+                                    <td>
+                                        <form method="POST" action="{{ url_for('manual_entry') }}" class="d-inline">
+                                            <input type="hidden" name="barcode" value="3017620422003">
+                                            <button type="submit" class="btn btn-sm btn-primary">Try</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>5449000000996</td>
+                                    <td>Coca-Cola</td>
+                                    <td>
+                                        <form method="POST" action="{{ url_for('manual_entry') }}" class="d-inline">
+                                            <input type="hidden" name="barcode" value="5449000000996">
+                                            <button type="submit" class="btn btn-sm btn-primary">Try</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>7622210449283</td>
+                                    <td>Oreo Cookies</td>
+                                    <td>
+                                        <form method="POST" action="{{ url_for('manual_entry') }}" class="d-inline">
+                                            <input type="hidden" name="barcode" value="7622210449283">
+                                            <button type="submit" class="btn btn-sm btn-primary">Try</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

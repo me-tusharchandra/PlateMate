@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+
+{% block title %}Scan Product - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-lg border-0 rounded-lg mt-5">
+                <div class="card-header">
+                    <h3 class="text-center font-weight-light my-4">Scan Product Barcode</h3>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('scan_barcode') }}" enctype="multipart/form-data">
+                        <div class="text-center mb-4">
+                            <p class="lead">Upload an image of a product barcode to check if it's safe for you.</p>
+                        </div>
+                        
+                        <div class="scanner-container mb-4">
+                            <input type="file" id="image_file" name="image_file" accept="image/*" capture="environment">
+                            <div class="scanner-content">
+                                <i class="fas fa-barcode scanner-icon"></i>
+                                <h5>Upload Barcode Image</h5>
+                                <p class="text-muted">Click or drag an image here</p>
+                            </div>
+                        </div>
+                        
+                        <div id="image_preview" class="text-center"></div>
+                        
+                        <div class="d-grid gap-2 mt-4">
+                            <button type="submit" id="scan_submit" class="btn btn-primary d-none">
+                                <i class="fas fa-search me-2"></i>Analyze Product
+                            </button>
+                        </div>
+                    </form>
+                    
+                    <div class="text-center mt-4">
+                        <p>Don't have a barcode image?</p>
+                        <a href="{{ url_for('manual_entry') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-keyboard me-2"></i>Enter Barcode Manually
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card shadow-lg border-0 rounded-lg mt-4">
+                <div class="card-header">
+                    <h5 class="text-center font-weight-light my-2">How to Scan</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4 text-center mb-3">
+                            <i class="fas fa-camera fa-2x text-primary mb-2"></i>
+                            <h6>Take a Photo</h6>
+                            <p class="small text-muted">Take a clear photo of the product barcode</p>
+                        </div>
+                        <div class="col-md-4 text-center mb-3">
+                            <i class="fas fa-upload fa-2x text-primary mb-2"></i>
+                            <h6>Upload Image</h6>
+                            <p class="small text-muted">Upload the barcode image using the form above</p>
+                        </div>
+                        <div class="col-md-4 text-center mb-3">
+                            <i class="fas fa-robot fa-2x text-primary mb-2"></i>
+                            <h6>Get AI Analysis</h6>
+                            <p class="small text-muted">Gemini 2.0 will analyze if the product is safe for you</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

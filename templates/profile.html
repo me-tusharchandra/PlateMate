@@ -1,0 +1,119 @@
+{% extends 'base.html' %}
+
+{% block title %}Update Profile - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-lg border-0 rounded-lg mt-5">
+                <div class="card-header">
+                    <h3 class="text-center font-weight-light my-4">Update Your Profile</h3>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('profile') }}">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="username" class="form-label">Username</label>
+                                    <input type="text" class="form-control" id="username" value="{{ user.username }}" disabled>
+                                    <div class="form-text">Username cannot be changed.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="name" class="form-label">Full Name</label>
+                                    <input type="text" class="form-control" id="name" name="name" value="{{ user.name }}" required>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="mobile" class="form-label">Mobile Number</label>
+                                    <input type="text" class="form-control" id="mobile" value="{{ user.mobile }}" disabled>
+                                    <div class="form-text">Mobile number cannot be changed.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="age" class="form-label">Age</label>
+                                    <input type="number" class="form-control" id="age" name="age" value="{{ user.age }}" min="1" max="120" required>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="allergies" class="form-label">Allergies</label>
+                            <select multiple class="form-select" id="allergies" name="allergies" size="5">
+                                {% for allergy in suggested_allergies %}
+                                    <option value="{{ allergy }}" {% if allergy in user_allergies %}selected{% endif %}>
+                                        {{ allergy }}
+                                    </option>
+                                {% endfor %}
+                                
+                                {% for allergy in user_allergies %}
+                                    {% if allergy not in suggested_allergies and allergy %}
+                                        <option value="{{ allergy }}" selected>{{ allergy }}</option>
+                                    {% endif %}
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Hold Ctrl (Windows) or Command (Mac) to select multiple options.</div>
+                        </div>
+                        
+                        <div class="input-group mb-4">
+                            <input type="text" class="form-control" id="custom_allergy" placeholder="Add custom allergy">
+                            <button class="btn btn-outline-secondary" type="button" id="add_custom_custom_allergy">Add</button>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="health_conditions" class="form-label">Health Conditions</label>
+                            <select multiple class="form-select" id="health_conditions" name="health_conditions" size="5">
+                                {% for condition in suggested_health %}
+                                    <option value="{{ condition }}" {% if condition in user_health %}selected{% endif %}>
+                                        {{ condition }}
+                                    </option>
+                                {% endfor %}
+                                
+                                {% for condition in user_health %}
+                                    {% if condition not in suggested_health and condition %}
+                                        <option value="{{ condition }}" selected>{{ condition }}</option>
+                                    {% endif %}
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Hold Ctrl (Windows) or Command (Mac) to select multiple options.</div>
+                        </div>
+                        
+                        <div class="input-group mb-4">
+                            <input type="text" class="form-control" id="custom_health" placeholder="Add custom health condition">
+                            <button class="btn btn-outline-secondary" type="button" id="add_custom_custom_health">Add</button>
+                        </div>
+                        
+                        <div class="mt-4 mb-0">
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-primary btn-block">Update Profile</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Style for selected options */
+    option.selected {
+        background-color: #4e73df;
+        color: white;
+    }
+    
+    /* Make multiple select more user-friendly */
+    select[multiple] {
+        overflow-y: auto;
+    }
+</style>
+{% endblock %} 

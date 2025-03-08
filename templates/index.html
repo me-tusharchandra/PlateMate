@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+
+{% block title %}PlateMate - Your Dietary Allergy Monitoring Assistant{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row align-items-center">
+        <div class="col-lg-6">
+            <h1 class="display-4 fw-bold mb-4">Welcome to PlateMate</h1>
+            <p class="lead mb-4">
+                Your personal dietary allergy monitoring assistant powered by Gemini 2.0 AI.
+                Scan product barcodes to check if they're safe for your dietary needs.
+            </p>
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start mb-4">
+                {% if 'user_id' in session %}
+                    <a href="{{ url_for('scan_barcode') }}" class="btn btn-primary btn-lg px-4 me-md-2">
+                        <i class="fas fa-barcode me-2"></i>Scan Product
+                    </a>
+                    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-lg px-4">
+                        <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                    </a>
+                {% else %}
+                    <a href="{{ url_for('register') }}" class="btn btn-primary btn-lg px-4 me-md-2">
+                        <i class="fas fa-user-plus me-2"></i>Register
+                    </a>
+                    <a href="{{ url_for('login') }}" class="btn btn-outline-secondary btn-lg px-4">
+                        <i class="fas fa-sign-in-alt me-2"></i>Login
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <img src="{{ url_for('static', filename='img/platemate-hero.svg') }}" alt="PlateMate Hero Image" class="img-fluid">
+        </div>
+    </div>
+
+    <div class="row mt-5 pt-5">
+        <div class="col-12 text-center mb-4">
+            <h2 class="fw-bold">How It Works</h2>
+            <p class="lead">PlateMate makes it easy to check if food products are safe for your dietary needs</p>
+        </div>
+    </div>
+
+    <div class="row mb-5">
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 text-center">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <i class="fas fa-user-plus fa-3x text-primary"></i>
+                    </div>
+                    <h4 class="card-title">1. Create Your Profile</h4>
+                    <p class="card-text">Register and add your allergies and health conditions to your profile.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 text-center">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <i class="fas fa-barcode fa-3x text-primary"></i>
+                    </div>
+                    <h4 class="card-title">2. Scan Products</h4>
+                    <p class="card-text">Scan product barcodes using your device's camera or enter them manually.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 text-center">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <i class="fas fa-check-circle fa-3x text-primary"></i>
+                    </div>
+                    <h4 class="card-title">3. Get AI Analysis</h4>
+                    <p class="card-text">Gemini 2.0 AI analyzes the product and tells you if it's safe for your needs.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-5 pt-3">
+        <div class="col-12 text-center mb-4">
+            <h2 class="fw-bold">Key Features</h2>
+        </div>
+    </div>
+
+    <div class="row mb-5">
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="me-3">
+                            <i class="fas fa-robot fa-2x text-primary"></i>
+                        </div>
+                        <h4 class="card-title mb-0">AI-Powered Analysis</h4>
+                    </div>
+                    <p class="card-text">
+                        Gemini 2.0 AI analyzes product ingredients against your health profile to determine if a product is safe for you.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="me-3">
+                            <i class="fas fa-exchange-alt fa-2x text-primary"></i>
+                        </div>
+                        <h4 class="card-title mb-0">Alternative Suggestions</h4>
+                    </div>
+                    <p class="card-text">
+                        If a product isn't safe for you, PlateMate suggests safer alternatives from the same category.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="me-3">
+                            <i class="fas fa-history fa-2x text-primary"></i>
+                        </div>
+                        <h4 class="card-title mb-0">Product History</h4>
+                    </div>
+                    <p class="card-text">
+                        Keep track of all the products you've scanned and their safety status for future reference.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="me-3">
+                            <i class="fas fa-database fa-2x text-primary"></i>
+                        </div>
+                        <h4 class="card-title mb-0">Extensive Product Database</h4>
+                    </div>
+                    <p class="card-text">
+                        Access information on millions of food products through the OpenFoodFacts database.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-5 py-5 bg-light rounded-3">
+        <div class="col-12 text-center">
+            <h2 class="fw-bold mb-4">Ready to get started?</h2>
+            <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                {% if 'user_id' in session %}
+                    <a href="{{ url_for('scan_barcode') }}" class="btn btn-primary btn-lg px-4 me-md-2">
+                        <i class="fas fa-barcode me-2"></i>Scan Product
+                    </a>
+                {% else %}
+                    <a href="{{ url_for('register') }}" class="btn btn-primary btn-lg px-4 me-md-2">
+                        <i class="fas fa-user-plus me-2"></i>Register Now
+                    </a>
+                    <a href="{{ url_for('login') }}" class="btn btn-outline-secondary btn-lg px-4">
+                        <i class="fas fa-sign-in-alt me-2"></i>Login
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 
