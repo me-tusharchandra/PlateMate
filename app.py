@@ -5,7 +5,17 @@ import requests
 import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
-# from pyzbar.pyzbar import decode
+# Set the path to the zbar library before importing pyzbar
+import ctypes.util
+original_find_library = ctypes.util.find_library
+
+def custom_find_library(name):
+    if name == 'zbar':
+        return '/opt/homebrew/lib/libzbar.dylib'
+    return original_find_library(name)
+
+ctypes.util.find_library = custom_find_library
+from pyzbar.pyzbar import decode
 import google.generativeai as genai
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import IntegrityError
@@ -119,46 +129,18 @@ def read_barcode(image_path=None, frame=None):
             print("No image path or frame provided")
             return None
             
-        # Try to use pyzbar if available (most reliable)
-        try:
-            from pyzbar.pyzbar import decode
-            barcodes = decode(img)
-            if barcodes:
-                return [(barcode.data.decode('utf-8'), barcode.type) for barcode in barcodes]
-        except ImportError:
-            print("pyzbar not available, falling back to OpenCV")
-        except Exception as e:
-            print(f"Error using pyzbar: {str(e)}")
+        # Use pyzbar to decode barcodes
+        barcodes = decode(img)
         
-        # If pyzbar fails or is not available, use a simpler OpenCV approach
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Apply adaptive thresholding
-        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                      cv2.THRESH_BINARY, 11, 2)
-        
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Filter contours based on area and aspect ratio to find potential barcode regions
-        potential_barcodes = []
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            area = cv2.contourArea(contour)
-            aspect_ratio = float(w) / h if h > 0 else 0
+        if not barcodes:
+            return None
             
-            # Barcodes typically have a specific aspect ratio and minimum area
-            if area > 1000 and (aspect_ratio > 2.0 or aspect_ratio < 0.5):
-                potential_barcodes.append((x, y, w, h))
-        
-        # If we found potential barcodes, try to decode them
-        if potential_barcodes:
-            print(f"Found {len(potential_barcodes)} potential barcode regions")
-            # For now, we'll return a manual entry required
-            return [("MANUAL_ENTRY_REQUIRED", "UNKNOWN")]
-        
-        return None
+        results = []
+        for barcode in barcodes:
+            barcode_data = barcode.data.decode('utf-8')
+            barcode_type = barcode.type
+            results.append((barcode_data, barcode_type))
+        return results
         
     except Exception as e:
         import traceback
