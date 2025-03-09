@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+
+{% block title %}Reset Database - PlateMate{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h3 class="mb-0">Reset Database</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Warning:</strong> This action will delete all data in the database, including user accounts, saved products, and all other information. This cannot be undone.
+                    </div>
+                    
+                    <p>Use this option only for development purposes when you need to start with a clean database.</p>
+                    
+                    <form method="POST" action="{{ url_for('reset_database') }}" class="mt-4">
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="confirmReset" required>
+                            <label class="form-check-label" for="confirmReset">
+                                I understand that this will permanently delete all data
+                            </label>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-danger" id="resetButton" disabled>
+                                <i class="fas fa-trash-alt me-2"></i>Reset Database
+                            </button>
+                            <a href="{{ url_for('home') }}" class="btn btn-secondary">
+                                <i class="fas fa-arrow-left me-2"></i>Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Enable the reset button only when the checkbox is checked
+    document.getElementById('confirmReset').addEventListener('change', function() {
+        document.getElementById('resetButton').disabled = !this.checked;
+    });
+</script>
+{% endblock %} 

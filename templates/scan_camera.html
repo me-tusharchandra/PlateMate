@@ -48,9 +48,11 @@
                         <a href="{{ url_for('manual_entry') }}" class="btn btn-outline-secondary">
                             <i class="fas fa-keyboard"></i> Manual Entry
                         </a>
-                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
-                            <i class="fas fa-arrow-left"></i> Back to Dashboard
-                        </a>
+                        <div class="text-center mb-4">
+                            <a href="{{ url_for('home') }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-arrow-left"></i> Back to Home
+                            </a>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -200,6 +202,26 @@
                     // Barcode detected and product found
                     stopScanning();
                     updateStatus('Product found!', 'success');
+                    
+                    // Display product info
+                    productName.textContent = data.product.title;
+                    productInfo.innerHTML = `
+                        Brand: ${data.product.brand}<br>
+                        Category: ${data.product.category}<br>
+                        Barcode: ${data.barcode} (${data.barcode_type})
+                    `;
+                    
+                    scanResult.classList.remove('d-none');
+                    
+                    // Redirect to product details page after a short delay
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url;
+                    }, 2000);
+                }
+                else if (data.status === 'already_scanned') {
+                    // Product already scanned by user
+                    stopScanning();
+                    updateStatus(data.message || 'You have already scanned this product.', 'info');
                     
                     // Display product info
                     productName.textContent = data.product.title;

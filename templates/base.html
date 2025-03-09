@@ -34,9 +34,6 @@
                     
                     {% if 'user_id' in session %}
                         <li class="nav-item">
-                            <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
-                        </li>
-                        <li class="nav-item">
                             <a class="nav-link" href="{{ url_for('scan_barcode') }}">Scan Product</a>
                         </li>
                         <li class="nav-item">
@@ -96,8 +93,8 @@
                     <ul class="list-unstyled">
                         <li><a href="{{ url_for('home') }}" class="text-white">Home</a></li>
                         {% if 'user_id' in session %}
-                            <li><a href="{{ url_for('dashboard') }}" class="text-white">Dashboard</a></li>
                             <li><a href="{{ url_for('scan_barcode') }}" class="text-white">Scan Product</a></li>
+                            <li><a href="{{ url_for('product_history') }}" class="text-white">History</a></li>
                         {% else %}
                             <li><a href="{{ url_for('login') }}" class="text-white">Login</a></li>
                             <li><a href="{{ url_for('register') }}" class="text-white">Register</a></li>
@@ -115,6 +112,10 @@
             <hr>
             <div class="text-center">
                 <p>&copy; {{ now.year }} PlateMate. All rights reserved.</p>
+                <!-- Development tools - remove in production -->
+                <div class="mt-2 small">
+                    <a href="{{ url_for('reset_database') }}" class="text-muted">Reset Database</a>
+                </div>
             </div>
         </div>
     </footer>

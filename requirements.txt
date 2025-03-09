@@ -13,3 +13,4 @@ pyzbar==0.1.9
 # For Windows: pip install pyzbar[scripts]
 gunicorn==21.2.0 
 dotenv
+googletrans==4.0.0-rc1

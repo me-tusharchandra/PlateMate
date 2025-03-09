@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, session, render_template, redirect, url_for, flash, Response
 import base64
+import time
 
 # 1. Load Environment Variables ----------------------------------------
 load_dotenv()
@@ -103,27 +104,24 @@ def read_barcode(image_path=None, frame=None):
         # If we're processing a file
         if image_path and not frame:
             # Read the image
-            image = cv2.imread(image_path)
-            if image is None:
+            img = cv2.imread(image_path)
+            if img is None:
                 print(f"Failed to read image from {image_path}")
                 return None
         # If we're processing a video frame
         elif frame is not None:
-            image = frame
-            if image is None or image.size == 0:
+            img = frame
+            if img is None or img.size == 0:
                 print("Received empty frame")
                 return None
         else:
             print("No image path or frame provided")
             return None
             
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
         # Try to use pyzbar if available (most reliable)
         try:
             from pyzbar.pyzbar import decode
-            barcodes = decode(image)
+            barcodes = decode(img)
             if barcodes:
                 return [(barcode.data.decode('utf-8'), barcode.type) for barcode in barcodes]
         except ImportError:
@@ -131,88 +129,32 @@ def read_barcode(image_path=None, frame=None):
         except Exception as e:
             print(f"Error using pyzbar: {str(e)}")
         
-        # Initialize the cv2 QRCode detector
-        qr_detector = cv2.QRCodeDetector()
+        # If pyzbar fails or is not available, use a simpler OpenCV approach
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Detect and decode QR code
-        data, bbox, _ = qr_detector.detectAndDecode(gray)
-        
-        # If QR code is detected
-        if data:
-            print(f"QR code detected: {data}")
-            return [(data, "QR-Code")]
-            
-        # Enhanced OpenCV-based barcode detection methods
-        
-        # Method 1: Apply adaptive thresholding
+        # Apply adaptive thresholding
         thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                       cv2.THRESH_BINARY, 11, 2)
         
-        # Method 2: Try Canny edge detection with better parameters
-        edges = cv2.Canny(gray, 50, 200, apertureSize=3)
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Method 3: Try different blurring techniques
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        
-        # Method 4: Morphological operations to enhance barcode features
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel)
-        
-        # Method 5: Sobel edge detection (good for barcodes)
-        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        sobel = cv2.magnitude(sobelx, sobely)
-        sobel = cv2.normalize(sobel, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-        _, sobel_binary = cv2.threshold(sobel, 50, 255, cv2.THRESH_BINARY)
-        
-        # Combine methods for contour detection
-        for img in [thresh, edges, binary, morph, sobel_binary]:
-            contours, _ = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Filter contours based on area and aspect ratio to find potential barcode regions
+        potential_barcodes = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = cv2.contourArea(contour)
+            aspect_ratio = float(w) / h if h > 0 else 0
             
-            # Filter contours based on area and aspect ratio to find potential barcode regions
-            potential_barcodes = []
-            for contour in contours:
-                x, y, w, h = cv2.boundingRect(contour)
-                area = cv2.contourArea(contour)
-                aspect_ratio = float(w) / h if h > 0 else 0
-                
-                # Barcodes typically have a specific aspect ratio and minimum area
-                if area > 1000 and (aspect_ratio > 2.0 or aspect_ratio < 0.5):
-                    potential_barcodes.append((x, y, w, h))
-            
-            # If we found potential barcodes, try to decode them
-            if potential_barcodes:
-                print(f"Found {len(potential_barcodes)} potential barcode regions")
-                
-                # For each potential barcode region, try to extract and decode
-                for x, y, w, h in potential_barcodes:
-                    # Add padding around the region
-                    padding = 10
-                    x_start = max(0, x - padding)
-                    y_start = max(0, y - padding)
-                    x_end = min(gray.shape[1], x + w + padding)
-                    y_end = min(gray.shape[0], y + h + padding)
-                    
-                    # Extract the region
-                    roi = gray[y_start:y_end, x_start:x_end]
-                    
-                    # Try to enhance the region for better detection
-                    _, roi_binary = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                    
-                    # Try to detect lines in the region (barcodes have parallel lines)
-                    lines = cv2.HoughLinesP(roi_binary, 1, np.pi/180, 50, minLineLength=w/3, maxLineGap=10)
-                    
-                    # If we found enough parallel lines, it's likely a barcode
-                    if lines is not None and len(lines) > 5:
-                        # For now, we'll return a manual entry required
-                        # In a production app, you might want to implement a more sophisticated
-                        # barcode decoding algorithm here
-                        return [("MANUAL_ENTRY_REQUIRED", "UNKNOWN")]
+            # Barcodes typically have a specific aspect ratio and minimum area
+            if area > 1000 and (aspect_ratio > 2.0 or aspect_ratio < 0.5):
+                potential_barcodes.append((x, y, w, h))
         
-        # If we have too many potential barcodes, it's likely not a barcode image
-        if len(contours) > 5:  # Arbitrary threshold for potential barcode presence
+        # If we found potential barcodes, try to decode them
+        if potential_barcodes:
+            print(f"Found {len(potential_barcodes)} potential barcode regions")
+            # For now, we'll return a manual entry required
             return [("MANUAL_ENTRY_REQUIRED", "UNKNOWN")]
         
         return None
@@ -228,66 +170,297 @@ def get_product_from_openfoodfacts(barcode):
     Fetches product details using the OpenFoodFacts API.
     Returns a dictionary with product information if found, else None.
     """
-    url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
-    response = requests.get(url)
-
-    if response.status_code == 200:
-        data = response.json()
-        if "product" in data and data["product"]:
-            product = data["product"]
-            title = product.get("product_name", "No product title found")
-            brand = product.get("brands", "Unknown brand")
-            description = product.get("generic_name", "No description available")
-            ingredients = product.get("ingredients_text", "") or ""
-            category = product.get("categories", "Unknown category")
-            image_url = product.get("image_url", "")
-            nutriments = product.get("nutriments", {})
+    # Helper function to extract English fields
+    def get_english_field(product, field_name, default=""):
+        # First try the English-specific field
+        if f"{field_name}_en" in product and product[f"{field_name}_en"]:
+            return product[f"{field_name}_en"]
+        # Then try the regular field
+        elif field_name in product and product[field_name]:
+            return product[field_name]
+        # Finally return the default value
+        return default
+    
+    # First try direct barcode lookup with language and country parameters
+    url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json?lc=en&cc=us"
+    
+    try:
+        response = requests.get(url, timeout=10)  # Add timeout to prevent hanging
+        
+        if response.status_code == 200:
+            data = response.json()
             
-            # Extract allergen information
-            allergens = product.get("allergens_tags", [])
-            allergens_from_ingredients = product.get("allergens_from_ingredients", "")
-            
-            # Extract ingredient analysis information
-            ingredients_analysis = product.get("ingredients_analysis_tags", [])
-            
-            # Extract detailed ingredients list
-            ingredients_list = []
-            if "ingredients" in product and isinstance(product["ingredients"], list):
-                for ingredient in product["ingredients"]:
-                    ingredients_list.append({
-                        "id": ingredient.get("id", ""),
-                        "text": ingredient.get("text", ""),
-                        "percent": ingredient.get("percent_estimate", 0),
-                        "vegan": ingredient.get("vegan", "unknown"),
-                        "vegetarian": ingredient.get("vegetarian", "unknown"),
-                        "from_palm_oil": ingredient.get("from_palm_oil", "unknown")
-                    })
-            
-            # Extract nutrition grade and eco-score
-            nutrition_grade = product.get("nutriscore_grade", "")
-            eco_score = product.get("ecoscore_grade", "")
-            
-            # Extract traces information (may contain traces of)
-            traces = product.get("traces_tags", [])
-            
-            return {
-                "barcode": barcode,
-                "title": title,
-                "brand": brand,
-                "description": description,
-                "ingredients": ingredients,
-                "ingredients_list": ingredients_list,
-                "category": category,
-                "image_url": image_url,
-                "nutriments": nutriments,
-                "allergens": allergens,
-                "allergens_from_ingredients": allergens_from_ingredients,
-                "ingredients_analysis": ingredients_analysis,
-                "nutrition_grade": nutrition_grade,
-                "eco_score": eco_score,
-                "traces": traces
-            }
-    return None
+            # Check if product data exists
+            if "product" in data and data["product"]:
+                product = data["product"]
+                
+                # Extract basic product information with English priority
+                title = get_english_field(product, "product_name", "No product title found")
+                brand = get_english_field(product, "brands", "Unknown brand")
+                
+                # Improve description handling
+                description = get_english_field(product, "generic_name", "")
+                
+                # If description is empty or in a non-English language, try alternative fields
+                if not description or any(c.isalpha() and ord(c) > 127 for c in description):
+                    # Try product_name_en if generic_name didn't work
+                    if "product_name_en" in product and product["product_name_en"]:
+                        description = product["product_name_en"]
+                    # Try the first English category as a fallback
+                    elif "categories_tags" in product:
+                        for tag in product["categories_tags"]:
+                            if tag.startswith('en:'):
+                                description = tag[3:].replace('-', ' ').capitalize()
+                                break
+                
+                # If still empty, use a default
+                if not description:
+                    description = "No description available"
+                
+                ingredients = get_english_field(product, "ingredients_text", "No ingredients information available")
+                
+                # Handle category with the same improved logic
+                category = get_english_field(product, "categories", "Unknown category")
+                if category == "Unknown category" or not category.strip() or "," in category:
+                    # Try to extract English categories from categories_tags
+                    if "categories_tags" in product:
+                        categories_tags = product.get("categories_tags", [])
+                        if categories_tags:
+                            # Extract only English category names from tags
+                            categories = []
+                            for tag in categories_tags:
+                                if tag.startswith('en:'):
+                                    # Convert tag to readable format (replace hyphens with spaces, capitalize words)
+                                    clean_category = tag[3:].replace('-', ' ')
+                                    # Capitalize each word
+                                    clean_category = ' '.join(word.capitalize() for word in clean_category.split())
+                                    categories.append(clean_category)
+                            
+                            if categories:
+                                category = ", ".join(categories)
+                    
+                    # If we still don't have a good category, try to clean up the existing one
+                    if category == "Unknown category" or not category.strip():
+                        if "categories" in product:
+                            raw_categories = product.get("categories", "")
+                            # Split by commas and clean up each category
+                            if raw_categories and "," in raw_categories:
+                                cat_parts = [part.strip() for part in raw_categories.split(",")]
+                                # Keep only English-looking parts (no special characters)
+                                english_parts = []
+                                for part in cat_parts:
+                                    # Simple heuristic: if it has mostly ASCII characters, it's likely English
+                                    if sum(c.isalpha() and ord(c) < 128 for c in part) > len(part) * 0.7:
+                                        english_parts.append(part.capitalize())
+                                
+                                if english_parts:
+                                    category = ", ".join(english_parts)
+                
+                # Get image URL - prioritize English images if available
+                image_url = ""
+                if "selected_images" in product and "front" in product["selected_images"]:
+                    if "display" in product["selected_images"]["front"]:
+                        if "en" in product["selected_images"]["front"]["display"]:
+                            image_url = product["selected_images"]["front"]["display"]["en"]
+                        else:
+                            # Fallback to any available image
+                            for lang in product["selected_images"]["front"]["display"]:
+                                image_url = product["selected_images"]["front"]["display"][lang]
+                                break
+                
+                # If still no image, try the regular image fields
+                if not image_url:
+                    image_url = product.get("image_url", "")
+                if not image_url and "image_front_url" in product:
+                    image_url = product.get("image_front_url", "")
+                
+                # Extract nutriments
+                nutriments = product.get("nutriments", {})
+                
+                # Extract allergen information - clean up the tags to remove 'en:' prefix
+                allergens = []
+                for allergen in product.get("allergens_tags", []):
+                    if allergen.startswith('en:'):
+                        allergens.append(allergen[3:].replace('-', ' '))
+                    else:
+                        allergens.append(allergen.replace('-', ' '))
+                
+                allergens_from_ingredients = product.get("allergens_from_ingredients", "")
+                
+                # Extract ingredient analysis information - clean up the tags
+                ingredients_analysis = []
+                for tag in product.get("ingredients_analysis_tags", []):
+                    if tag.startswith('en:'):
+                        ingredients_analysis.append(tag[3:].replace('-', ' '))
+                    else:
+                        ingredients_analysis.append(tag.replace('-', ' '))
+                
+                # Extract detailed ingredients list
+                ingredients_list = []
+                if "ingredients" in product and isinstance(product["ingredients"], list):
+                    for ingredient in product["ingredients"]:
+                        # Try to get English text if available
+                        ingredient_text = ingredient.get("text", "")
+                        if "id" in ingredient and ingredient["id"].startswith("en:"):
+                            ingredient_text = ingredient["id"][3:].replace('-', ' ')
+                        
+                        ingredients_list.append({
+                            "id": ingredient.get("id", ""),
+                            "text": ingredient_text,
+                            "percent": ingredient.get("percent_estimate", 0),
+                            "vegan": ingredient.get("vegan", "unknown"),
+                            "vegetarian": ingredient.get("vegetarian", "unknown"),
+                            "from_palm_oil": ingredient.get("from_palm_oil", "unknown")
+                        })
+                
+                # Extract nutrition grade and eco-score
+                nutrition_grade = product.get("nutriscore_grade", "")
+                eco_score = product.get("ecoscore_grade", "")
+                
+                # Extract traces information (may contain traces of)
+                traces = []
+                for trace in product.get("traces_tags", []):
+                    if trace.startswith('en:'):
+                        traces.append(trace[3:].replace('-', ' '))
+                    else:
+                        traces.append(trace.replace('-', ' '))
+                
+                return {
+                    "barcode": barcode,
+                    "title": title,
+                    "brand": brand,
+                    "description": description,
+                    "ingredients": ingredients,
+                    "ingredients_list": ingredients_list,
+                    "category": category,
+                    "image_url": image_url,
+                    "nutriments": nutriments,
+                    "allergens": allergens,
+                    "allergens_from_ingredients": allergens_from_ingredients,
+                    "ingredients_analysis": ingredients_analysis,
+                    "nutrition_grade": nutrition_grade,
+                    "eco_score": eco_score,
+                    "traces": traces
+                }
+            else:
+                # If direct lookup failed, try searching by barcode
+                print(f"Direct lookup failed for barcode {barcode}, trying search...")
+                search_url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={barcode}&search_simple=1&action=process&json=1&lc=en&cc=us"
+                
+                try:
+                    search_response = requests.get(search_url, timeout=10)
+                    if search_response.status_code == 200:
+                        search_data = search_response.json()
+                        if 'products' in search_data and search_data['products']:
+                            # Use the first product from search results
+                            product = search_data['products'][0]
+                            
+                            # Extract the same information as above using the helper function
+                            title = get_english_field(product, "product_name", "No product title found")
+                            brand = get_english_field(product, "brands", "Unknown brand")
+                            
+                            # Improve description handling
+                            description = get_english_field(product, "generic_name", "")
+                            
+                            # If description is empty or in a non-English language, try alternative fields
+                            if not description or any(c.isalpha() and ord(c) > 127 for c in description):
+                                # Try product_name_en if generic_name didn't work
+                                if "product_name_en" in product and product["product_name_en"]:
+                                    description = product["product_name_en"]
+                                # Try the first English category as a fallback
+                                elif "categories_tags" in product:
+                                    for tag in product["categories_tags"]:
+                                        if tag.startswith('en:'):
+                                            description = tag[3:].replace('-', ' ').capitalize()
+                                            break
+                            
+                            # If still empty, use a default
+                            if not description:
+                                description = "No description available"
+                            
+                            ingredients = get_english_field(product, "ingredients_text", "No ingredients information available")
+                            
+                            # Handle category with the same improved logic
+                            category = get_english_field(product, "categories", "Unknown category")
+                            if category == "Unknown category" or not category.strip() or "," in category:
+                                # Try to extract English categories from categories_tags
+                                if "categories_tags" in product:
+                                    categories_tags = product.get("categories_tags", [])
+                                    if categories_tags:
+                                        # Extract only English category names from tags
+                                        categories = []
+                                        for tag in categories_tags:
+                                            if tag.startswith('en:'):
+                                                # Convert tag to readable format (replace hyphens with spaces, capitalize words)
+                                                clean_category = tag[3:].replace('-', ' ')
+                                                # Capitalize each word
+                                                clean_category = ' '.join(word.capitalize() for word in clean_category.split())
+                                                categories.append(clean_category)
+                                        
+                                        if categories:
+                                            category = ", ".join(categories)
+                                
+                                # If we still don't have a good category, try to clean up the existing one
+                                if category == "Unknown category" or not category.strip():
+                                    if "categories" in product:
+                                        raw_categories = product.get("categories", "")
+                                        # Split by commas and clean up each category
+                                        if raw_categories and "," in raw_categories:
+                                            cat_parts = [part.strip() for part in raw_categories.split(",")]
+                                            # Keep only English-looking parts (no special characters)
+                                            english_parts = []
+                                            for part in cat_parts:
+                                                # Simple heuristic: if it has mostly ASCII characters, it's likely English
+                                                if sum(c.isalpha() and ord(c) < 128 for c in part) > len(part) * 0.7:
+                                                    english_parts.append(part.capitalize())
+                                                
+                                            if english_parts:
+                                                category = ", ".join(english_parts)
+                            
+                            # Get image URL
+                            image_url = ""
+                            if "selected_images" in product and "front" in product["selected_images"]:
+                                if "display" in product["selected_images"]["front"]:
+                                    if "en" in product["selected_images"]["front"]["display"]:
+                                        image_url = product["selected_images"]["front"]["display"]["en"]
+                                    else:
+                                        # Fallback to any available image
+                                        for lang in product["selected_images"]["front"]["display"]:
+                                            image_url = product["selected_images"]["front"]["display"][lang]
+                                            break
+                            
+                            if not image_url:
+                                image_url = product.get("image_url", "")
+                            
+                            nutriments = product.get("nutriments", {})
+                            
+                            print(f"Found product via search: {title} by {brand}")
+                            
+                            return {
+                                "barcode": barcode,
+                                "title": title,
+                                "brand": brand,
+                                "description": description,
+                                "ingredients": ingredients,
+                                "category": category,
+                                "image_url": image_url,
+                                "nutriments": nutriments
+                            }
+                        else:
+                            print(f"No products found in search for barcode {barcode}")
+                            return None
+                    else:
+                        print(f"Search request failed with status code {search_response.status_code}")
+                        return None
+                except Exception as e:
+                    print(f"Error during search request: {str(e)}")
+                    return None
+        else:
+            print(f"Request failed with status code {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Error during request: {str(e)}")
+        return None
 
 def analyze_product_with_gemini(product_info, user_profile):
     """
@@ -432,11 +605,11 @@ def find_alternative_products(product_info, user_profile, analysis):
         # Get the category and search for products in the same category
         category = product_info['category'].split(',')[0].strip()
         
-        # Create a search query for OpenFoodFacts
-        search_url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={category}&search_simple=1&action=process&json=1"
+        # Create a search query for OpenFoodFacts with language and country parameters
+        search_url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={category}&search_simple=1&action=process&json=1&lc=en&cc=us"
         
         try:
-            response = requests.get(search_url)
+            response = requests.get(search_url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if 'products' in data and data['products']:
@@ -445,6 +618,10 @@ def find_alternative_products(product_info, user_profile, analysis):
                     user_allergens = [allergen.lower() for allergen in user_allergies]
                     
                     for product in data['products'][:15]:  # Check more products
+                        # Skip products without English names or descriptions
+                        if not product.get('product_name') and not product.get('product_name_en'):
+                            continue
+                            
                         ingredients_text = product.get('ingredients_text', '').lower()
                         product_allergens = [allergen.replace('en:', '').lower() for allergen in product.get('allergens_tags', [])]
                         
@@ -462,13 +639,18 @@ def find_alternative_products(product_info, user_profile, analysis):
                                 is_safe = False
                                 break
                         
-                        if is_safe and product.get('product_name'):
-                            product_key = f"{product.get('product_name', '').lower()}|{product.get('brands', '').lower()}"
+                        if is_safe:
+                            # Get product name, preferring English version
+                            product_name = product.get('product_name_en', '') or product.get('product_name', '')
+                            if not product_name:
+                                continue
+                                
+                            product_key = f"{product_name.lower()}|{product.get('brands', '').lower()}"
                             if product_key not in seen_products:
                                 seen_products.add(product_key)
                                 alternatives.append({
                                     "barcode": product.get('code', ''),
-                                    "title": product.get('product_name', ''),
+                                    "title": product_name,
                                     "brand": product.get('brands', ''),
                                     "category": product.get('categories', ''),
                                     "reason": "Safe alternative from the same category"
@@ -476,6 +658,55 @@ def find_alternative_products(product_info, user_profile, analysis):
                             
                             if len(alternatives) >= 5:
                                 break
+                                
+            # If we still don't have enough alternatives, try US-specific database
+            if len(alternatives) < 3:
+                us_search_url = f"https://us.openfoodfacts.org/cgi/search.pl?search_terms={category}&search_simple=1&action=process&json=1"
+                
+                try:
+                    us_response = requests.get(us_search_url, timeout=10)
+                    if us_response.status_code == 200:
+                        us_data = us_response.json()
+                        if 'products' in us_data and us_data['products']:
+                            for product in us_data['products'][:10]:
+                                # Skip products without English names
+                                product_name = product.get('product_name_en', '') or product.get('product_name', '')
+                                if not product_name:
+                                    continue
+                                    
+                                ingredients_text = product.get('ingredients_text', '').lower()
+                                product_allergens = [allergen.replace('en:', '').lower() for allergen in product.get('allergens_tags', [])]
+                                
+                                is_safe = True
+                                
+                                # Check for conflicting ingredients
+                                for ingredient in conflicting_ingredients:
+                                    if ingredient.lower() in ingredients_text:
+                                        is_safe = False
+                                        break
+                                
+                                # Check for user allergens
+                                for allergen in product_allergens:
+                                    if any(user_allergen in allergen for user_allergen in user_allergens):
+                                        is_safe = False
+                                        break
+                                
+                                if is_safe:
+                                    product_key = f"{product_name.lower()}|{product.get('brands', '').lower()}"
+                                    if product_key not in seen_products:
+                                        seen_products.add(product_key)
+                                        alternatives.append({
+                                            "barcode": product.get('code', ''),
+                                            "title": product_name,
+                                            "brand": product.get('brands', ''),
+                                            "category": product.get('categories', ''),
+                                            "reason": "Safe US alternative from the same category"
+                                        })
+                                    
+                                    if len(alternatives) >= 5:
+                                        break
+                except Exception as e:
+                    print(f"Error searching for US alternatives: {str(e)}")
         except Exception as e:
             print(f"Error searching for alternatives: {str(e)}")
     
@@ -487,7 +718,16 @@ def find_alternative_products(product_info, user_profile, analysis):
 @app.route('/')
 def home():
     if 'user_id' in session:
-        return redirect(url_for('dashboard'))
+        user = User.query.get(session['user_id'])
+        if not user:
+            session.clear()
+            flash("User not found. Please log in again.", "danger")
+            return redirect(url_for('login'))
+            
+        # Get user's recently scanned products
+        recent_products = SavedProduct.query.filter_by(user_id=user.id).order_by(SavedProduct.date_added.desc()).limit(5).all()
+        
+        return render_template('dashboard.html', user=user, recent_products=recent_products)
     return render_template('index.html')
 
 @app.route('/scan_camera')
@@ -608,13 +848,16 @@ def register():
 # User Login
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if 'user_id' in session:
+        return redirect(url_for('home'))
+        
     if request.method == 'POST':
         mobile = request.form.get('mobile')
         username = request.form.get('username')
         
-        if not (mobile or username):
-            flash("Please provide either mobile number or username.", "danger")
-            return redirect(url_for('login'))
+        if not mobile and not username:
+            flash("Please enter your mobile number or username.", "danger")
+            return redirect(request.url)
             
         # Try to find user by mobile or username
         user = None
@@ -628,7 +871,7 @@ def login():
             session['mobile'] = user.mobile
             session['username'] = user.username
             flash(f"Welcome back, {user.name}!", "success")
-            return redirect(url_for('dashboard'))
+            return redirect(url_for('home'))
         else:
             flash("User not found. Please register first.", "danger")
             
@@ -754,6 +997,18 @@ def scan_barcode():
                 return redirect(request.url)
                 
             barcode_data, barcode_type = results[0]
+            
+            # Check if this product has already been scanned by the user
+            existing_product = SavedProduct.query.filter_by(
+                user_id=user.id, 
+                barcode=barcode_data
+            ).first()
+            
+            if existing_product:
+                os.remove(filepath)  # Clean up
+                flash(f"You've already scanned this product ({existing_product.title}). Showing existing details.", "info")
+                return redirect(url_for('product_details', barcode=barcode_data))
+            
             product_info = get_product_from_openfoodfacts(barcode_data)
             
             os.remove(filepath)  # Clean up
@@ -806,11 +1061,11 @@ def scan_barcode():
     
     return render_template('scan.html')
 
-# Manual Barcode Entry
+# Manual Entry
 @app.route('/manual_entry', methods=['GET', 'POST'])
 def manual_entry():
     if 'user_id' not in session:
-        flash("Please log in to check products.", "warning")
+        flash("Please log in to manually enter products.", "warning")
         return redirect(url_for('login'))
         
     user = User.query.get(session['user_id'])
@@ -823,9 +1078,20 @@ def manual_entry():
         barcode = request.form.get('barcode')
         
         if not barcode:
-            flash("Please enter a barcode.", "danger")
+            flash("Barcode is required.", "danger")
             return redirect(request.url)
+        
+        # Check if this product has already been scanned by the user
+        existing_product = SavedProduct.query.filter_by(
+            user_id=user.id, 
+            barcode=barcode
+        ).first()
+        
+        if existing_product:
+            flash(f"You've already scanned this product ({existing_product.title}). Showing existing details.", "info")
+            return redirect(url_for('product_details', barcode=barcode))
             
+        # Get product information
         product_info = get_product_from_openfoodfacts(barcode)
         
         if not product_info:
@@ -903,11 +1169,15 @@ def product_details(barcode):
         flash("User not found. Please log in again.", "danger")
         return redirect(url_for('login'))
     
+    # Find the saved product in the database
+    saved_product = SavedProduct.query.filter_by(user_id=user.id, barcode=barcode).first()
+    
+    # Get product information from OpenFoodFacts
     product_info = get_product_from_openfoodfacts(barcode)
     
     if not product_info:
         flash(f"No product found for barcode {barcode}.", "warning")
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('home'))
         
     # Prepare user profile for Gemini analysis
     user_profile = {
@@ -925,6 +1195,7 @@ def product_details(barcode):
     return render_template(
         'product_details.html',
         product=product_info,
+        saved_product=saved_product,
         analysis=analysis,
         alternatives=alternatives,
         user=user
@@ -1084,6 +1355,28 @@ def scan_frame():
                 "message": "Barcode detected but couldn't be read clearly. Try adjusting lighting or position."
             })
         
+        # Check if this product has already been scanned by the user
+        user = User.query.get(session['user_id'])
+        existing_product = SavedProduct.query.filter_by(
+            user_id=user.id, 
+            barcode=barcode_data
+        ).first()
+        
+        if existing_product:
+            print(f"Product already scanned: {existing_product.title}")
+            return jsonify({
+                "status": "already_scanned",
+                "barcode": barcode_data,
+                "barcode_type": barcode_type,
+                "product": {
+                    "title": existing_product.title,
+                    "brand": existing_product.brand,
+                    "category": existing_product.category
+                },
+                "message": f"You've already scanned this product ({existing_product.title}).",
+                "redirect_url": url_for('product_details', barcode=barcode_data)
+            })
+        
         # Get product information
         product_info = get_product_from_openfoodfacts(barcode_data)
         
@@ -1096,7 +1389,6 @@ def scan_frame():
             })
             
         # Get user profile for analysis
-        user = User.query.get(session['user_id'])
         user_profile = {
             "allergies": user.allergies.split(',') if user.allergies else [],
             "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
@@ -1104,6 +1396,23 @@ def scan_frame():
         
         # Analyze product for user
         analysis = analyze_product_with_gemini(product_info, user_profile)
+        
+        # Save the product to user's history
+        try:
+            saved_product = SavedProduct(
+                barcode=barcode_data,
+                title=product_info['title'],
+                brand=product_info['brand'],
+                category=product_info['category'],
+                is_safe=analysis.get('is_safe', False),
+                user_id=user.id
+            )
+            db.session.add(saved_product)
+            db.session.commit()
+            print(f"Saved product to history: {product_info['title']}")
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error saving product: {str(e)}")
         
         # Return the result
         return jsonify({
@@ -1128,12 +1437,17 @@ def scan_frame():
 @app.route('/direct_camera')
 def direct_camera():
     """
-    A page that uses server-side camera access with OpenCV and streams it to the browser.
-    This is an alternative approach when browser-based camera access isn't working.
+    Render the direct camera feed page.
     """
     if 'user_id' not in session:
-        flash('Please log in to access this page.', 'warning')
+        flash("Please log in to access this page.", "warning")
         return redirect(url_for('login'))
+    
+    # Check if we need to redirect to a product page
+    if 'redirect_to_product' in session:
+        barcode = session.pop('redirect_to_product')
+        flash("Product already scanned. Showing existing details.", "info")
+        return redirect(url_for('product_details', barcode=barcode))
     
     return render_template('direct_camera.html')
 
@@ -1152,49 +1466,93 @@ def generate_frames():
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     
+    # Keep track of the last detected barcode to avoid repeated processing
+    last_barcode = None
+    last_detection_time = 0
+    cooldown_period = 3  # seconds
+    
     while True:
         success, frame = camera.read()
         if not success:
             print("Error: Failed to capture frame.")
             break
         
+        # Get current time
+        current_time = time.time()
+        
         # Process the frame to detect barcodes
         results = read_barcode(frame=frame)
         
-        # If a barcode is detected, draw a rectangle around it and display the data
+        # If a barcode is detected
         if results and results[0][0] != "MANUAL_ENTRY_REQUIRED":
             barcode_data, barcode_type = results[0]
-            cv2.putText(frame, f"{barcode_data} ({barcode_type})", (10, 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             
-            # Get product information
-            product_info = get_product_from_openfoodfacts(barcode_data)
-            
-            if product_info:
-                # Display product name
-                cv2.putText(frame, f"Product: {product_info['title']}", (10, 60), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            # Only process if it's a new barcode or cooldown period has passed
+            if barcode_data != last_barcode or (current_time - last_detection_time) > cooldown_period:
+                last_barcode = barcode_data
+                last_detection_time = current_time
                 
-                # Save the product to the user's history
+                cv2.putText(frame, f"{barcode_data} ({barcode_type})", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                
+                # Check if this product has already been scanned by the user
                 try:
                     user = User.query.get(session['user_id'])
-                    
-                    # Check if product already exists in user's history
                     existing_product = SavedProduct.query.filter_by(
-                        user_id=user.id, barcode=barcode_data).first()
+                        user_id=user.id, 
+                        barcode=barcode_data
+                    ).first()
                     
-                    if not existing_product:
-                        new_product = SavedProduct(
-                            barcode=barcode_data,
-                            title=product_info['title'],
-                            brand=product_info['brand'],
-                            category=product_info['category'],
-                            user_id=user.id
-                        )
-                        db.session.add(new_product)
-                        db.session.commit()
+                    if existing_product:
+                        # Display message that product was already scanned
+                        cv2.putText(frame, f"Already scanned: {existing_product.title}", (10, 60), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        cv2.putText(frame, "Redirecting to product page...", (10, 90), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        
+                        # Yield a few frames with the message before redirecting
+                        for _ in range(10):  # Show message for about 10 frames
+                            ret, buffer = cv2.imencode('.jpg', frame)
+                            if not ret:
+                                break
+                            frame_bytes = buffer.tobytes()
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                            time.sleep(0.1)  # Short delay
+                        
+                        # Redirect to product details page
+                        # Note: We can't directly redirect from here, so we'll set a session flag
+                        session['redirect_to_product'] = barcode_data
+                        continue
+                    
+                    # Get product information
+                    product_info = get_product_from_openfoodfacts(barcode_data)
+                    
+                    if product_info:
+                        # Display product name
+                        cv2.putText(frame, f"Product: {product_info['title']}", (10, 60), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        
+                        # Save the product to the user's history
+                        try:
+                            # Check if product already exists in user's history
+                            existing_product = SavedProduct.query.filter_by(
+                                user_id=user.id, barcode=barcode_data).first()
+                            
+                            if not existing_product:
+                                new_product = SavedProduct(
+                                    barcode=barcode_data,
+                                    title=product_info['title'],
+                                    brand=product_info['brand'],
+                                    category=product_info['category'],
+                                    user_id=user.id
+                                )
+                                db.session.add(new_product)
+                                db.session.commit()
+                        except Exception as e:
+                            print(f"Error saving product: {str(e)}")
                 except Exception as e:
-                    print(f"Error saving product: {str(e)}")
+                    print(f"Error processing barcode: {str(e)}")
         
         # Convert the frame to JPEG format
         ret, buffer = cv2.imencode('.jpg', frame)
@@ -1220,6 +1578,76 @@ def video_feed():
     
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# Admin route to reset the database (for development only)
+@app.route('/reset_database', methods=['GET', 'POST'])
+def reset_database():
+    """
+    Reset the database by dropping and recreating all tables.
+    This is for development purposes only and should be disabled in production.
+    """
+    if request.method == 'POST':
+        try:
+            # Drop all tables
+            db.drop_all()
+            print("All tables dropped")
+            
+            # Recreate all tables
+            db.create_all()
+            print("All tables recreated")
+            
+            # Clear session
+            session.clear()
+            
+            flash("Database has been reset successfully. All data has been cleared.", "success")
+            return redirect(url_for('home'))
+        except Exception as e:
+            flash(f"Error resetting database: {str(e)}", "danger")
+    
+    return render_template('reset_database.html')
+
+# Delete a saved product
+@app.route('/product/delete/<int:product_id>', methods=['POST'])
+def delete_product(product_id):
+    """
+    Delete a product from the user's history.
+    """
+    if 'user_id' not in session:
+        flash("Please log in to manage your products.", "warning")
+        return redirect(url_for('login'))
+        
+    user = User.query.get(session['user_id'])
+    if not user:
+        session.clear()
+        flash("User not found. Please log in again.", "danger")
+        return redirect(url_for('login'))
+    
+    # Find the product
+    product = SavedProduct.query.filter_by(id=product_id, user_id=user.id).first()
+    
+    if not product:
+        flash("Product not found or you don't have permission to delete it.", "danger")
+        return redirect(url_for('product_history'))
+    
+    try:
+        # Store product info for the success message
+        product_title = product.title
+        
+        # Delete the product
+        db.session.delete(product)
+        db.session.commit()
+        
+        flash(f"Product '{product_title}' has been deleted from your history.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Error deleting product: {str(e)}", "danger")
+    
+    # Redirect back to the referring page or history page
+    referrer = request.referrer
+    if referrer and (url_for('product_history') in referrer or url_for('dashboard') in referrer):
+        return redirect(referrer)
+    else:
+        return redirect(url_for('product_history'))
 
 # Run the application
 if __name__ == "__main__":
