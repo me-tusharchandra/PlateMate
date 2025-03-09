@@ -11,7 +11,6 @@
                 <i class="fas fa-barcode fa-sm text-white-50 me-2"></i>Scan Product
             </button>
             <ul class="dropdown-menu" aria-labelledby="scanDropdown">
-                <li><a class="dropdown-item" href="{{ url_for('scan_camera') }}"><i class="fas fa-camera me-2"></i>Camera Scan</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('direct_camera') }}"><i class="fas fa-video me-2"></i>Server Camera Scan</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('camera_test') }}"><i class="fas fa-video me-2"></i>Camera Test</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('scan_barcode') }}"><i class="fas fa-upload me-2"></i>Upload Image</a></li>
@@ -189,9 +188,6 @@
                             <i class="fas fa-box-open fa-3x text-gray-300 mb-3"></i>
                             <p class="text-muted">You haven't scanned any products yet.</p>
                             <div class="mt-2">
-                                <a href="{{ url_for('scan_camera') }}" class="btn btn-success me-2">
-                                    <i class="fas fa-camera me-2"></i>Camera Scan
-                                </a>
                                 <a href="{{ url_for('scan_barcode') }}" class="btn btn-primary me-2">
                                     <i class="fas fa-upload me-2"></i>Upload Image
                                 </a>
@@ -210,23 +206,18 @@
                     <h6 class="m-0 font-weight-bold text-primary">Quick Actions</h6>
                 </div>
                 <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-3 mb-3">
+                    <div class="row justify-content-center">
+                        <div class="col-md-4 mb-3">
                             <a href="{{ url_for('scan_barcode') }}" class="btn btn-primary btn-block py-3">
                                 <i class="fas fa-barcode fa-fw me-2"></i>Upload Image
                             </a>
                         </div>
-                        <div class="col-md-3 mb-3">
-                            <a href="{{ url_for('scan_camera') }}" class="btn btn-success btn-block py-3">
-                                <i class="fas fa-camera fa-fw me-2"></i>Camera Scan
-                            </a>
-                        </div>
-                        <div class="col-md-3 mb-3">
+                        <div class="col-md-4 mb-3">
                             <a href="{{ url_for('manual_entry') }}" class="btn btn-secondary btn-block py-3">
                                 <i class="fas fa-keyboard fa-fw me-2"></i>Manual Entry
                             </a>
                         </div>
-                        <div class="col-md-3 mb-3">
+                        <div class="col-md-4 mb-3">
                             <a href="{{ url_for('profile') }}" class="btn btn-info btn-block py-3">
                                 <i class="fas fa-user-edit fa-fw me-2"></i>Update Profile
                             </a>

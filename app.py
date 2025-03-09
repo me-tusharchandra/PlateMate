@@ -1,10 +1,20 @@
+# 1. Standard Library Imports ------------------------------------------
 import os
-import cv2
+import io
+import sys
 import json
-import requests
-import numpy as np
-from datetime import datetime
-from dotenv import load_dotenv
+import uuid
+import time
+import base64
+import ctypes
+import random
+import string
+import tempfile
+import threading
+import webbrowser
+from datetime import datetime, timedelta
+from functools import wraps
+
 # Set the path to the zbar library before importing pyzbar
 import ctypes.util
 original_find_library = ctypes.util.find_library
@@ -15,43 +25,54 @@ def custom_find_library(name):
     return original_find_library(name)
 
 ctypes.util.find_library = custom_find_library
+
+# 2. Third-Party Library Imports ---------------------------------------
+import cv2
+import numpy as np
+import requests
+from PIL import Image
+from io import BytesIO
 from pyzbar.pyzbar import decode
-import google.generativeai as genai
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.exc import IntegrityError
-from werkzeug.utils import secure_filename
-from flask import Flask, request, jsonify, session, render_template, redirect, url_for, flash, Response
-import base64
-import time
-import re
 
-# 1. Load Environment Variables ----------------------------------------
-load_dotenv()
+# 3. Load Environment Variables ----------------------------------------
+import dotenv
+dotenv.load_dotenv()
 
-# 2. Configure Gemini API ----------------------------------------------
+# 4. Configure Gemini API ----------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables")
 
+import google.generativeai as genai
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+gemini_model = genai.GenerativeModel('gemini-2.0-flash')
 
-# 3. Flask + SQLAlchemy Setup ------------------------------------------
+# 5. Flask + SQLAlchemy Setup ------------------------------------------
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.exc import IntegrityError
+from werkzeug.utils import secure_filename
+from flask import Flask, request, jsonify, session, render_template, redirect, url_for, flash, Response
+
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///platemate.db'
-app.config['SECRET_KEY'] = os.getenv("SECRET_KEY", "platemate_secret_key")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Set up the upload folder
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Initialize the database
 db = SQLAlchemy(app)
 
-# 4. Upload Configuration ----------------------------------------------
-UPLOAD_FOLDER = 'uploads'  # Directory to temporarily store uploaded files
+# 6. Upload Configuration ----------------------------------------------
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}  # Allowed file types
 # Ensure the upload folder exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# 5. Suggested Values for UI -------------------------------------------
+# 7. Suggested Values for UI -------------------------------------------
 SUGGESTED_ALLERGIES = [
     "Peanuts", "Tree Nuts", "Milk", "Eggs", "Fish", "Shellfish", "Soy", 
     "Wheat", "Gluten", "Sesame", "Mustard", "Celery", "Lupin", "Sulfites",
@@ -65,7 +86,7 @@ SUGGESTED_HEALTH_CONDITIONS = [
     "High Cholesterol", "Fatty Liver Disease", "Thyroid Disorders"
 ]
 
-# 6. Database Models --------------------------------------------------
+# 8. Database Models --------------------------------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(120), unique=True, nullable=False)
@@ -101,7 +122,7 @@ class AlternativeProduct(db.Model):
 with app.app_context():
     db.create_all()
 
-# 7. Helper Functions -------------------------------------------------
+# 9. Helper Functions -------------------------------------------------
 def allowed_file(filename):
     """Check if the uploaded file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -453,6 +474,17 @@ def analyze_product_with_gemini(product_info, user_profile):
     if not product_info or not user_profile:
         return {"status": "error", "message": "Invalid product or user information."}
     
+    # Ensure user_profile has all required fields
+    user_age = user_profile.get('age', 'Not specified')
+    user_allergies = user_profile.get('allergies', [])
+    user_health_conditions = user_profile.get('health_conditions', [])
+    
+    # Format allergies and health conditions as strings if they're lists
+    if isinstance(user_allergies, list):
+        user_allergies = ', '.join(user_allergies) if user_allergies else 'None'
+    if isinstance(user_health_conditions, list):
+        user_health_conditions = ', '.join(user_health_conditions) if user_health_conditions else 'None'
+    
     # Format the prompt for Gemini
     prompt = f"""
     Analyze this food product for dietary safety based on the user's profile:
@@ -473,9 +505,9 @@ def analyze_product_with_gemini(product_info, user_profile):
     - Ingredient Analysis: {', '.join(product_info.get('ingredients_analysis', []))}
     
     USER PROFILE:
-    - Age: {user_profile['age']}
-    - Allergies: {user_profile['allergies']}
-    - Health Conditions: {user_profile['health_conditions']}
+    - Age: {user_age}
+    - Allergies: {user_allergies}
+    - Health Conditions: {user_health_conditions}
     
     IMPORTANT: Ensure your analysis is based ONLY on the product information provided above. DO NOT invent or assume any information not explicitly stated. The product name is "{product_info['title']}" from brand "{product_info['brand']}" - do not change or modify this information in your analysis.
     
@@ -708,7 +740,7 @@ def find_alternative_products(product_info, user_profile, analysis):
     
     return alternatives[:5]  # Return at most 5 alternatives
 
-# 8. Routes -----------------------------------------------------------
+# 10. Routes -----------------------------------------------------------
 
 # Home route
 @app.route('/')
@@ -955,6 +987,9 @@ def profile():
 # Scan Barcode
 @app.route('/scan', methods=['GET', 'POST'])
 def scan_barcode():
+    """
+    Handle barcode scanning from uploaded images.
+    """
     if 'user_id' not in session:
         flash("Please log in to scan products.", "warning")
         return redirect(url_for('login'))
@@ -980,80 +1015,89 @@ def scan_barcode():
             return redirect(request.url)
             
         if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
+            # Generate a unique filename to avoid conflicts
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filename = f"upload_{timestamp}_{secure_filename(file.filename)}"
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            
+            # Make sure the uploads directory exists
+            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+            
+            # Save the file
             file.save(filepath)
             
-            # Process the barcode
-            results = read_barcode(filepath)
-            
-            if not results:
-                flash("No barcode detected in the uploaded image.", "danger")
-                os.remove(filepath)  # Clean up
-                return redirect(request.url)
-                
-            barcode_data, barcode_type = results[0]
-            
-            # Check if this product has already been scanned by the user
-            existing_product = SavedProduct.query.filter_by(
-                user_id=user.id, 
-                barcode=barcode_data
-            ).first()
-            
-            if existing_product:
-                os.remove(filepath)  # Clean up
-                flash(f"You've already scanned this product ({existing_product.title}). Showing existing details.", "info")
-                return redirect(url_for('product_details', barcode=barcode_data))
-            
-            product_info = get_product_from_openfoodfacts(barcode_data)
-            
-            os.remove(filepath)  # Clean up
-            
-            if not product_info:
-                flash(f"No product found for barcode {barcode_data}.", "warning")
-                return redirect(request.url)
-                
-            # Prepare user profile for Gemini analysis
-            user_profile = {
-                "age": user.age,
-                "allergies": user.allergies,
-                "health_conditions": user.health_conditions
-            }
-            
-            # Analyze with Gemini
-            analysis = analyze_product_with_gemini(product_info, user_profile)
-            
-            # Find alternative products
-            alternatives = find_alternative_products(product_info, user_profile, analysis)
-            
-            # Save the product to user's history
             try:
-                saved_product = SavedProduct(
+                # Process the barcode
+                results = read_barcode(filepath)
+                
+                if not results:
+                    flash("No barcode detected in the uploaded image.", "danger")
+                    return redirect(request.url)
+                    
+                barcode_data, barcode_type = results[0]
+                
+                # Check if this product has already been scanned by the user
+                existing_product = SavedProduct.query.filter_by(
+                    user_id=user.id, 
+                    barcode=barcode_data
+                ).first()
+                
+                if existing_product:
+                    flash(f"You've already scanned this product ({existing_product.title}). Showing existing details.", "info")
+                    return redirect(url_for('product_details', barcode=barcode_data))
+                
+                product_info = get_product_from_openfoodfacts(barcode_data)
+                
+                if not product_info:
+                    flash(f"No product found for barcode {barcode_data}.", "warning")
+                    return redirect(request.url)
+                
+                # Analyze the product with Gemini
+                analysis_result = analyze_product_with_gemini(product_info, {
+                    "name": user.name,
+                    "age": user.age,
+                    "allergies": user.allergies.split(',') if user.allergies else [],
+                    "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
+                })
+                
+                # Find alternative products
+                alternatives = find_alternative_products(product_info, {
+                    "name": user.name,
+                    "age": user.age,
+                    "allergies": user.allergies.split(',') if user.allergies else [],
+                    "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
+                }, analysis_result)
+                
+                # Save the product to the user's history
+                new_product = SavedProduct(
                     barcode=barcode_data,
-                    title=product_info['title'],
-                    brand=product_info['brand'],
-                    category=product_info['category'],
-                    is_safe=analysis.get('is_safe', False),
+                    title=product_info.get('product_name', 'Unknown Product'),
+                    brand=product_info.get('brands', ''),
+                    category=product_info.get('categories', ''),
+                    is_safe=analysis_result.get('is_safe', False),
                     user_id=user.id
                 )
-                db.session.add(saved_product)
+                
+                db.session.add(new_product)
                 db.session.commit()
+                
+                # Store analysis in session for the product details page
+                session['product_info'] = product_info
+                session['analysis_result'] = analysis_result
+                session['alternatives'] = alternatives
+                
+                return redirect(url_for('product_details', barcode=barcode_data))
+                
             except Exception as e:
-                db.session.rollback()
-                print(f"Error saving product: {str(e)}")
-            
-            return render_template(
-                'scan_result.html',
-                barcode=barcode_data,
-                barcode_type=barcode_type,
-                product=product_info,
-                analysis=analysis,
-                alternatives=alternatives,
-                user=user
-            )
-        else:
-            flash("Unsupported file type. Please upload a PNG, JPG, or JPEG image.", "danger")
-            return redirect(request.url)
+                flash(f"Error processing image: {str(e)}", "danger")
+                return redirect(request.url)
+            finally:
+                # Always clean up the file, but use try/except to avoid errors if file doesn't exist
+                try:
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                except Exception as e:
+                    print(f"Error removing file {filepath}: {str(e)}")
     
     return render_template('scan.html')
 
@@ -1099,9 +1143,10 @@ def manual_entry():
             
         # Prepare user profile for Gemini analysis
         user_profile = {
+            "name": user.name,
             "age": user.age,
-            "allergies": user.allergies,
-            "health_conditions": user.health_conditions
+            "allergies": user.allergies.split(',') if user.allergies else [],
+            "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
         }
         
         # Analyze with Gemini
@@ -1179,9 +1224,10 @@ def product_details(barcode):
         
     # Prepare user profile for Gemini analysis
     user_profile = {
+        "name": user.name,
         "age": user.age,
-        "allergies": user.allergies,
-        "health_conditions": user.health_conditions
+        "allergies": user.allergies.split(',') if user.allergies else [],
+        "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
     }
     
     # Analyze with Gemini
@@ -1227,9 +1273,10 @@ def api_analyze():
         
     # Prepare user profile for Gemini analysis
     user_profile = {
+        "name": user.name,
         "age": user.age,
-        "allergies": user.allergies,
-        "health_conditions": user.health_conditions
+        "allergies": user.allergies.split(',') if user.allergies else [],
+        "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
     }
     
     # Analyze with Gemini
@@ -1392,6 +1439,8 @@ def scan_frame():
             
         # Get user profile for analysis
         user_profile = {
+            "name": user.name,
+            "age": user.age,
             "allergies": user.allergies.split(',') if user.allergies else [],
             "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
         }
@@ -1651,7 +1700,300 @@ def delete_product(product_id):
     else:
         return redirect(url_for('product_history'))
 
+# Function to open Oculus casting page on startup
+def open_oculus_casting():
+    # Wait a few seconds to ensure the Flask app has started
+    time.sleep(3)
+    print("Opening Oculus casting page...")
+    webbrowser.open("https://www.oculus.com/casting", new=2)
+
+# Endpoint to manually trigger opening the Oculus casting page
+@app.route('/open_oculus', methods=['GET'])
+def trigger_oculus_casting():
+    """Endpoint to manually trigger opening the Oculus casting page"""
+    threading.Thread(target=open_oculus_casting).start()
+    return jsonify({"status": "success", "message": "Opening Oculus casting page"}), 200
+
+# API endpoint for Quest 3 integration
+@app.route('/status', methods=['GET'])
+def status():
+    """Simple endpoint to check if the server is running"""
+    return jsonify({"status": "online", "message": "PlateMate server is running"}), 200
+
+@app.route('/analyze', methods=['POST'])
+def analyze_quest_image():
+    """
+    Endpoint to analyze images from Quest 3 headset
+    Takes a screenshot of the Chrome browser window showing Oculus casting
+    Returns: Analysis result formatted for voice output based on the prompt
+    """
+    try:
+        # Get data from request
+        data = request.get_json()
+        print("=== QUEST DEBUG: Received analyze request ===")
+        
+        if not data or 'prompt' not in data:
+            print("QUEST DEBUG: Missing prompt in request")
+            return jsonify({
+                "success": False,
+                "error": "Missing required field: prompt"
+            }), 400
+            
+        # Extract the prompt (used for formatting the response)
+        format_prompt = data['prompt']
+        print(f"QUEST DEBUG: Prompt received: {format_prompt[:50]}...")
+        
+        # Create a unique filename for this request
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        temp_image_path = os.path.join(app.config['UPLOAD_FOLDER'], f"oculus_screenshot_{timestamp}.jpg")
+        
+        # Also create a permanent debug image path that won't be deleted
+        debug_image_path = os.path.join(app.config['UPLOAD_FOLDER'], "last_quest_screenshot.jpg")
+        
+        # Make sure the uploads directory exists
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        
+        try:
+            # Just find and capture the existing Chrome window with Oculus casting
+            import pyautogui
+            import time
+            
+            print("QUEST DEBUG: Attempting to find and capture existing Chrome window with Oculus casting...")
+            
+            # Try to find and focus on the Chrome window with Oculus casting
+            if os.name == 'posix':  # macOS
+                try:
+                    # Use AppleScript to activate Chrome and focus on the Oculus casting tab
+                    applescript = '''
+                    tell application "Google Chrome"
+                        activate
+                        set found to false
+                        set windowList to every window
+                        repeat with aWindow in windowList
+                            set tabList to every tab of aWindow
+                            repeat with atab in tabList
+                                if URL of atab contains "oculus.com/casting" then
+                                    set active tab of aWindow to atab
+                                    set index of aWindow to 1
+                                    set found to true
+                                    exit repeat
+                                end if
+                            end repeat
+                            if found then exit repeat
+                        end repeat
+                    end tell
+                    '''
+                    
+                    # Run the AppleScript to focus on the Oculus casting tab
+                    import subprocess
+                    print("QUEST DEBUG: Running AppleScript to focus on existing Oculus casting tab")
+                    subprocess.run(['osascript', '-e', applescript], check=False)
+                    
+                    # Give Chrome time to come to the foreground
+                    time.sleep(1)
+                    
+                    # Take a screenshot
+                    print("QUEST DEBUG: Taking screenshot of Chrome with Oculus casting")
+                    screenshot = pyautogui.screenshot()
+                    
+                except Exception as e:
+                    print(f"QUEST DEBUG: Error with AppleScript: {str(e)}")
+                    # Fallback to just taking a screenshot
+                    screenshot = pyautogui.screenshot()
+            else:  # Windows
+                # On Windows, try to find Chrome window with Oculus in the title
+                import win32gui
+                import win32con
+                
+                def window_enum_callback(hwnd, results):
+                    if win32gui.IsWindowVisible(hwnd):
+                        window_title = win32gui.GetWindowText(hwnd)
+                        if "Chrome" in window_title and ("Oculus" in window_title or "Meta Quest" in window_title or "casting" in window_title):
+                            results.append(hwnd)
+                
+                chrome_windows = []
+                win32gui.EnumWindows(window_enum_callback, chrome_windows)
+                
+                if chrome_windows:
+                    # Activate the Chrome window
+                    hwnd = chrome_windows[0]
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)  # Restore if minimized
+                    win32gui.SetForegroundWindow(hwnd)  # Bring to front
+                    print(f"QUEST DEBUG: Found and activated Chrome window with handle {hwnd}")
+                    
+                    # Give it time to come to the foreground
+                    time.sleep(1)
+                    
+                    # Get the window dimensions
+                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                    width = right - left
+                    height = bottom - top
+                    
+                    # Take screenshot of the Chrome window
+                    screenshot = pyautogui.screenshot(region=(left, top, width, height))
+                    print(f"QUEST DEBUG: Captured Chrome window with dimensions: {width}x{height}")
+                else:
+                    print("QUEST DEBUG: No Chrome window with Oculus found, taking full screenshot")
+                    screenshot = pyautogui.screenshot()
+            
+            print(f"QUEST DEBUG: Screenshot taken, size: {screenshot.width}x{screenshot.height}, mode: {screenshot.mode}")
+            
+            # Convert to RGB mode if needed (JPEG doesn't support RGBA)
+            if screenshot.mode == 'RGBA':
+                screenshot = screenshot.convert('RGB')
+                print("QUEST DEBUG: Converted from RGBA to RGB for JPEG compatibility")
+                
+            # Save the screenshot with high quality
+            screenshot.save(temp_image_path, quality=100)
+            
+            # Also save a copy for debugging that won't be deleted
+            screenshot.save(debug_image_path, quality=100)
+            print(f"QUEST DEBUG: Screenshot saved to {temp_image_path} and {debug_image_path}")
+            
+            # Try to read barcode directly from the screenshot without preprocessing
+            print("QUEST DEBUG: Attempting barcode detection on original image...")
+            barcode_results = read_barcode(temp_image_path)
+            
+            # Get current user profile
+            user_profile = None
+            if 'user_id' in session:
+                user = User.query.get(session['user_id'])
+                if user:
+                    user_profile = {
+                        "name": user.name,
+                        "age": user.age,
+                        "allergies": user.allergies.split(',') if user.allergies else [],
+                        "health_conditions": user.health_conditions.split(',') if user.health_conditions else []
+                    }
+                    print(f"QUEST DEBUG: Using logged-in user profile: {user.name}")
+            else:
+                # Create a default user profile if not logged in
+                user_profile = {
+                    "name": "Guest",
+                    "age": "Not specified",
+                    "allergies": [],
+                    "health_conditions": []
+                }
+                print("QUEST DEBUG: Using default guest profile")
+            
+            # If barcode detected, get product info
+            if barcode_results and barcode_results[0][0] != "MANUAL_ENTRY_REQUIRED":
+                barcode = barcode_results[0][0]
+                barcode_type = barcode_results[0][1]
+                print(f"QUEST DEBUG: Barcode detected: {barcode}, type: {barcode_type}")
+                product_info = get_product_from_openfoodfacts(barcode)
+                
+                if not product_info:
+                    print(f"QUEST DEBUG: No product info found for barcode {barcode}")
+                    return jsonify({
+                        "success": True,
+                        "response": "I couldn't find information about this product. The barcode was detected but no product data was found."
+                    }), 200
+                
+                print(f"QUEST DEBUG: Product info found: {product_info.get('title', 'Unknown')} by {product_info.get('brand', 'Unknown')}")
+                
+                # Analyze the product with Gemini
+                analysis_result = analyze_product_with_gemini(product_info, user_profile)
+                print("QUEST DEBUG: Product analyzed with Gemini")
+                
+                # Find alternative products
+                alternatives = find_alternative_products(product_info, user_profile, analysis_result)
+                print(f"QUEST DEBUG: Found {len(alternatives)} alternative products")
+                
+                # Format the response for voice output based on the prompt
+                is_safe = analysis_result.get('is_safe', False)
+                safety_status = "Safe" if is_safe else "Unsafe"
+                
+                # Create a concise response suitable for voice output
+                response_text = f"{safety_status}. {analysis_result.get('summary', '')}"
+                
+                # Add alternatives if available (limit to 3)
+                if alternatives and len(alternatives) > 0:
+                    alt_count = min(3, len(alternatives))
+                    response_text += f" Here are {alt_count} healthier alternatives: "
+                    
+                    for i in range(alt_count):
+                        alt = alternatives[i]
+                        response_text += f"{i+1}. {alt.get('title', 'Unknown product')}. "
+                
+                print(f"QUEST DEBUG: Response prepared: {response_text[:50]}...")
+                return jsonify({
+                    "success": True,
+                    "response": response_text,
+                    "product_info": {
+                        "title": product_info.get('product_name', 'Unknown'),
+                        "brand": product_info.get('brands', 'Unknown'),
+                        "barcode": barcode,
+                        "is_safe": is_safe
+                    }
+                }), 200
+            else:
+                # No barcode detected
+                print("QUEST DEBUG: No barcode detected in the screenshot")
+                return jsonify({
+                    "success": True,
+                    "response": "I couldn't detect a barcode in this image. Please try to get a clearer view of the product barcode."
+                }), 200
+            
+        except Exception as e:
+            import traceback
+            print(f"QUEST DEBUG: Screenshot processing error: {str(e)}")
+            print(traceback.format_exc())
+            return jsonify({
+                "success": False,
+                "error": f"Failed to process screenshot: {str(e)}"
+            }), 400
+        
+    except Exception as e:
+        import traceback
+        print(f"QUEST DEBUG: Error in analyze_quest_image: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": f"Server error: {str(e)}"
+        }), 500
+    finally:
+        # Clean up the temporary file, but keep the debug files
+        try:
+            if 'temp_image_path' in locals() and os.path.exists(temp_image_path):
+                os.remove(temp_image_path)
+                print(f"QUEST DEBUG: Removed temporary file {temp_image_path}")
+        except Exception as e:
+            print(f"QUEST DEBUG: Error removing file {temp_image_path}: {str(e)}")
+
 # Run the application
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True) 
+    # Open the Oculus casting page in a new window when the server starts
+    def open_oculus_window_on_startup():
+        print("Opening Oculus casting page in a new browser window...")
+        time.sleep(3)  # Wait a bit for the server to fully start
+        try:
+            if os.name == 'posix':  # macOS
+                # Use AppleScript to open in a new Chrome window
+                applescript = '''
+                tell application "Google Chrome"
+                    make new window
+                    set URL of active tab of front window to "https://www.oculus.com/casting"
+                    activate
+                end tell
+                '''
+                import subprocess
+                subprocess.run(['osascript', '-e', applescript], check=False)
+                print("Opened Oculus casting page in Chrome using AppleScript")
+            else:  # Windows
+                webbrowser.get('chrome').open_new("https://www.oculus.com/casting")
+                print("Opened Oculus casting page in Chrome using webbrowser")
+        except Exception as e:
+            print(f"Error opening Oculus casting page: {str(e)}")
+            try:
+                # Fallback to default browser
+                webbrowser.open_new("https://www.oculus.com/casting")
+                print("Opened Oculus casting page in default browser")
+            except Exception as e2:
+                print(f"Error opening browser: {str(e2)}")
+
+    # Start the browser window in a separate thread to avoid blocking
+    threading.Thread(target=open_oculus_window_on_startup, daemon=True).start()
+    
+    # Start the Flask app
+    app.run(host='0.0.0.0', port=5000, debug=True) 
