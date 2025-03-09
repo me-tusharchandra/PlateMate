@@ -13,6 +13,7 @@ from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, session, render_template, redirect, url_for, flash, Response
 import base64
 import time
+import re
 
 # 1. Load Environment Variables ----------------------------------------
 load_dotenv()
@@ -494,6 +495,8 @@ def analyze_product_with_gemini(product_info, user_profile):
     - Allergies: {user_profile['allergies']}
     - Health Conditions: {user_profile['health_conditions']}
     
+    IMPORTANT: Ensure your analysis is based ONLY on the product information provided above. DO NOT invent or assume any information not explicitly stated. The product name is "{product_info['title']}" from brand "{product_info['brand']}" - do not change or modify this information in your analysis.
+    
     Please provide:
     1. Is this product safe for the user to consume? (Yes/No/Caution)
     2. Detailed explanation of why it is safe or unsafe
@@ -518,7 +521,6 @@ def analyze_product_with_gemini(product_info, user_profile):
             # First try to extract JSON if it's wrapped in text
             response_text = response.text
             # Look for JSON pattern between curly braces
-            import re
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 json_str = json_match.group(0)
@@ -537,6 +539,18 @@ def analyze_product_with_gemini(product_info, user_profile):
                 "alternatives": [],
                 "dietary_advice": "Please consult with a healthcare professional."
             }
+        
+        # Ensure the analysis doesn't contain incorrect product information
+        if "explanation" in analysis:
+            # Replace any incorrect product references with the actual product name
+            incorrect_patterns = [
+                (r'blueberry jam', product_info['title']),
+                (r'jam', product_info['title']),
+                (r'jelly', product_info['title'])
+            ]
+            
+            for pattern, replacement in incorrect_patterns:
+                analysis["explanation"] = re.sub(pattern, replacement, analysis["explanation"], flags=re.IGNORECASE)
         
         return analysis
         
@@ -1097,6 +1111,9 @@ def manual_entry():
         if not product_info:
             flash(f"No product found for barcode {barcode}.", "warning")
             return redirect(request.url)
+        
+        # Log the product information for debugging
+        print(f"Manual entry - Product info for barcode {barcode}: {product_info['title']} by {product_info['brand']}")
             
         # Prepare user profile for Gemini analysis
         user_profile = {
@@ -1107,6 +1124,10 @@ def manual_entry():
         
         # Analyze with Gemini
         analysis = analyze_product_with_gemini(product_info, user_profile)
+        
+        # Ensure analysis doesn't override product information
+        if "product_name" in analysis:
+            del analysis["product_name"]
         
         # Find alternative products
         alternatives = find_alternative_products(product_info, user_profile, analysis)
@@ -1127,15 +1148,7 @@ def manual_entry():
             db.session.rollback()
             print(f"Error saving product: {str(e)}")
         
-        return render_template(
-            'scan_result.html',
-            barcode=barcode,
-            barcode_type="MANUAL",
-            product=product_info,
-            analysis=analysis,
-            alternatives=alternatives,
-            user=user
-        )
+        return redirect(url_for('product_details', barcode=barcode))
     
     return render_template('manual_entry.html')
 
@@ -1178,6 +1191,9 @@ def product_details(barcode):
     if not product_info:
         flash(f"No product found for barcode {barcode}.", "warning")
         return redirect(url_for('home'))
+    
+    # Log the product information for debugging
+    print(f"Product info for barcode {barcode}: {product_info['title']} by {product_info['brand']}")
         
     # Prepare user profile for Gemini analysis
     user_profile = {
@@ -1188,6 +1204,10 @@ def product_details(barcode):
     
     # Analyze with Gemini
     analysis = analyze_product_with_gemini(product_info, user_profile)
+    
+    # Ensure analysis doesn't override product information
+    if "product_name" in analysis:
+        del analysis["product_name"]
     
     # Find alternative products
     alternatives = find_alternative_products(product_info, user_profile, analysis)
